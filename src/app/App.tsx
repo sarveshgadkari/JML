@@ -1,0 +1,344 @@
+import { useState } from "react";
+import { Scale, UserCircle, LogIn } from "lucide-react";
+import LandingPage from "./components/LandingPage";
+import Sidebar from "./components/Sidebar";
+import LoginModal from "./components/LoginModal";
+import SignupModal from "./components/SignupModal";
+import LawyersList from "./components/LawyersList";
+import JudgesList from "./components/JudgesList";
+import CourtsList from "./components/CourtsList";
+import LawyerDetails from "./components/LawyerDetails";
+import JudgeDetails from "./components/JudgeDetails";
+import CourtDetails from "./components/CourtDetails";
+import SearchLawyers from "./components/SearchLawyers";
+import FindLawyerWizard from "./components/FindLawyerWizard";
+import LawyerDashboard from "./components/LawyerDashboard";
+import ClientDashboard from "./components/ClientDashboard";
+import AdminDashboard from "./components/AdminDashboard";
+import { getCurrentSession, checkCurrentUserAdmin } from "../utils/auth";
+
+export type UserRole = "client" | "lawyer" | null;
+
+export default function App() {
+  const [currentView, setCurrentView] =
+    useState<string>("landing");
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showSignupModal, setShowSignupModal] = useState(false);
+  const [loginRole, setLoginRole] = useState<
+    "client" | "lawyer"
+  >("client");
+  const [userRole, setUserRole] = useState<UserRole>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    null,
+  );
+  const [detailBackView, setDetailBackView] = useState<string>("lawyers");
+
+  const handleLogin = async (
+    email: string,
+    password: string,
+    role: "client" | "lawyer",
+  ) => {
+    try {
+      // Get current session (already set by signIn in LoginModal)
+      const session = await getCurrentSession();
+      
+      if (!session || !session.user) {
+        console.error('No session found after login');
+        return;
+      }
+
+      setUserId(session.user.id);
+      setUserRole(role);
+
+      // Check if user is admin (for lawyers only)
+      if (role === "lawyer") {
+        try {
+          const isAdminUser = await checkCurrentUserAdmin();
+          setIsAdmin(isAdminUser);
+
+          // Redirect based on admin status
+          if (isAdminUser) {
+            setCurrentView("admin-dashboard");
+          } else {
+            setCurrentView("lawyer-dashboard");
+          }
+        } catch (error) {
+          console.error('Error checking admin status:', error);
+          // Default to lawyer dashboard if check fails
+          setCurrentView("lawyer-dashboard");
+        }
+      } else if (role === "client") {
+        setCurrentView("client-dashboard");
+      }
+
+      setShowLoginModal(false);
+    } catch (error) {
+      console.error('Error in handleLogin:', error);
+    }
+  };
+
+  const handleLogout = () => {
+    setUserRole(null);
+    setIsAdmin(false);
+    setCurrentView("landing");
+  };
+
+  const openLoginModal = (role: "client" | "lawyer") => {
+    setLoginRole(role);
+    setShowLoginModal(true);
+  };
+
+  const openSignupModal = (role: "client" | "lawyer") => {
+    setLoginRole(role);
+    setShowSignupModal(true);
+  };
+
+  const viewLawyerDetails = (id: string) => {
+    setSelectedId(id);
+    setDetailBackView("lawyers");
+    setCurrentView("lawyer-details");
+  };
+
+  const viewLawyerDetailsFromSearch = (id: string) => {
+    setSelectedId(id);
+    setDetailBackView("search");
+    setCurrentView("lawyer-details");
+  };
+
+  const viewJudgeDetails = (id: string) => {
+    setSelectedId(id);
+    setCurrentView("judge-details");
+  };
+
+  const viewCourtDetails = (id: string) => {
+    setSelectedId(id);
+    setCurrentView("court-details");
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Navigation */}
+      {currentView !== "landing" && (
+        <nav className="bg-white border-b border-[#e0e3e7] shadow-sm sticky top-0 z-50 backdrop-blur-sm bg-white/95">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between h-16">
+              <button
+                onClick={() => setCurrentView("landing")}
+                className="flex items-center gap-2 group"
+              >
+                <div className="bg-gradient-to-br from-[#1a2332] to-[#2d3d54] p-2 rounded-xl">
+                  <Scale className="w-6 h-6 text-[#d4a574]" />
+                </div>
+                <span className="font-bold text-xl text-[#1a2332] group-hover:text-[#1e40af] transition-colors">
+                  Judge My Lawyer
+                </span>
+              </button>
+
+              <div className="flex items-center gap-6">
+                {!userRole ? (
+                  <>
+                    <button
+                      onClick={() =>
+                        setCurrentView("lawyers")
+                      }
+                      className="text-[#5f6368] hover:text-[#1e40af] font-semibold transition-colors"
+                    >
+                      Lawyers
+                    </button>
+                    <button
+                      onClick={() => setCurrentView("judges")}
+                      className="text-[#5f6368] hover:text-[#7c3aed] font-semibold transition-colors"
+                    >
+                      Judges
+                    </button>
+                    <button
+                      onClick={() => setCurrentView("courts")}
+                      className="text-[#5f6368] hover:text-[#047857] font-semibold transition-colors"
+                    >
+                      Courts
+                    </button>
+                    <button
+                      onClick={() => setCurrentView("search")}
+                      className="text-[#5f6368] hover:text-[#1a2332] font-semibold transition-colors"
+                    >
+                      Find a Lawyer
+                    </button>
+                    <button
+                      onClick={() => openLoginModal("client")}
+                      className="flex items-center gap-2 bg-gradient-to-r from-[#1e40af] to-[#3b82f6] text-white px-5 py-2.5 rounded-xl font-semibold hover:shadow-lg transition-all duration-300"
+                    >
+                      <LogIn className="w-4 h-4" />
+                      Login
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() =>
+                        setCurrentView("lawyers")
+                      }
+                      className="text-[#5f6368] hover:text-[#1e40af] font-semibold transition-colors"
+                    >
+                      Lawyers
+                    </button>
+                    <button
+                      onClick={() => setCurrentView("judges")}
+                      className="text-[#5f6368] hover:text-[#7c3aed] font-semibold transition-colors"
+                    >
+                      Judges
+                    </button>
+                    <button
+                      onClick={() => setCurrentView("courts")}
+                      className="text-[#5f6368] hover:text-[#047857] font-semibold transition-colors"
+                    >
+                      Courts
+                    </button>
+                    <button
+                      onClick={() => setCurrentView("search")}
+                      className="text-[#5f6368] hover:text-[#1a2332] font-semibold transition-colors"
+                    >
+                      Find a Lawyer
+                    </button>
+                    {userRole === "lawyer" && !isAdmin && (
+                      <button
+                        onClick={() =>
+                          setCurrentView("lawyer-dashboard")
+                        }
+                        className="text-[#5f6368] hover:text-[#1a2332] font-semibold transition-colors"
+                      >
+                        My Profile
+                      </button>
+                    )}
+                    {userRole === "lawyer" && isAdmin && (
+                      <button
+                        onClick={() =>
+                          setCurrentView("admin-dashboard")
+                        }
+                        className="text-[#5f6368] hover:text-[#1a2332] font-semibold transition-colors"
+                      >
+                        Admin Panel
+                      </button>
+                    )}
+                    {userRole === "client" && (
+                      <button
+                        onClick={() =>
+                          setCurrentView("client-dashboard")
+                        }
+                        className="text-[#5f6368] hover:text-[#1a2332] font-semibold transition-colors"
+                      >
+                        My Dashboard
+                      </button>
+                    )}
+                    <div className="flex items-center gap-3 pl-6 border-l border-[#e0e3e7]">
+                      <div className="bg-gradient-to-br from-[#1e40af] to-[#3b82f6] p-2 rounded-full">
+                        <UserCircle className="w-5 h-5 text-white" />
+                      </div>
+                      <button
+                        onClick={handleLogout}
+                        className="text-sm font-semibold text-[#5f6368] hover:text-[#b91c1c] transition-colors"
+                      >
+                        Logout
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </nav>
+      )}
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="lg:grid lg:grid-cols-12 lg:gap-6">
+          {/* Sidebar - visible on large screens */}
+          <div className="hidden lg:block lg:col-span-3">
+            <Sidebar />
+          </div>
+
+          {/* Primary content */}
+          <div className="lg:col-span-9">
+            {currentView === "landing" && (
+              <LandingPage
+                onNavigate={setCurrentView}
+                onLogin={openLoginModal}
+                onViewLawyerDetails={viewLawyerDetails}
+                onViewJudgeDetails={viewJudgeDetails}
+                onViewCourtDetails={viewCourtDetails}
+              />
+            )}
+        {currentView === "lawyers" && (
+          <LawyersList onViewDetails={viewLawyerDetails} />
+        )}
+        {currentView === "judges" && (
+          <JudgesList onViewDetails={viewJudgeDetails} />
+        )}
+        {currentView === "courts" && (
+          <CourtsList onViewDetails={viewCourtDetails} />
+        )}
+        {currentView === "lawyer-details" && selectedId && (
+          <LawyerDetails
+            lawyerId={selectedId}
+            onBack={() => setCurrentView(detailBackView)}
+          />
+        )}
+        {currentView === "judge-details" && selectedId && (
+          <JudgeDetails
+            judgeId={selectedId}
+            onBack={() => setCurrentView("judges")}
+          />
+        )}
+        {currentView === "court-details" && selectedId && (
+          <CourtDetails
+            courtId={selectedId}
+            onBack={() => setCurrentView("courts")}
+          />
+        )}
+        {currentView === "search" && (
+          <FindLawyerWizard onViewDetails={viewLawyerDetailsFromSearch} />
+        )}
+        {currentView === "lawyer-dashboard" &&
+          userRole === "lawyer" && <LawyerDashboard />}
+        {currentView === "client-dashboard" &&
+          userRole === "client" && (
+            <ClientDashboard
+              onViewDetails={viewLawyerDetails}
+            />
+          )}
+        {currentView === "admin-dashboard" &&
+          userRole === "lawyer" &&
+          isAdmin && (
+            <AdminDashboard
+              onSwitchToLawyer={() => setCurrentView("lawyer-dashboard")}
+            />
+          )}
+          </div>
+        </div>
+      </main>
+
+      {/* Login Modal */}
+      {showLoginModal && (
+        <LoginModal
+          role={loginRole}
+          onClose={() => setShowLoginModal(false)}
+          onLogin={handleLogin}
+          onSwitchToSignup={() => {
+            setShowLoginModal(false);
+            setShowSignupModal(true);
+          }}
+        />
+      )}
+
+      {/* Signup Modal */}
+      {showSignupModal && (
+        <SignupModal
+          role={loginRole}
+          onClose={() => setShowSignupModal(false)}
+          onSignup={handleLogin}
+        />
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,104 @@
+
+        {/* Batch 3: Settlement & Case Evolution Analytics */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          {/* Average Case Age Distribution */}
+          <div className="bg-white rounded-2xl border border-[#e0e3e7] p-6 shadow-sm">
+            <h2 className="text-lg font-bold text-[#1a2332] mb-2">Average Case Age Distribution</h2>
+            <p className="text-sm text-[#5f6368] mb-6">Pending cases grouped by age buckets</p>
+            
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart
+                data={(() => {
+                  const pendingCases = filteredCaseHistory.filter(c => c.outcome === 'Pending');
+                  const ageBuckets = [
+                    { name: '0-6 months', min: 0, max: 180, count: 0, color: '#10b981' },
+                    { name: '6-12 months', min: 180, max: 365, count: 0, color: '#3b82f6' },
+                    { name: '1-2 years', min: 365, max: 730, count: 0, color: '#f59e0b' },
+                    { name: '2-3 years', min: 730, max: 1095, count: 0, color: '#ef4444' },
+                    { name: '3+ years', min: 1095, max: 10000, count: 0, color: '#991b1b' }
+                  ];
+                  
+                  pendingCases.forEach(c => {
+                    const ageInDays = Math.floor((new Date().getTime() - new Date(c.filingDate).getTime()) / (1000 * 60 * 60 * 24));
+                    const bucket = ageBuckets.find(b => ageInDays >= b.min && ageInDays < b.max);
+                    if (bucket) bucket.count++;
+                  });
+                  
+                  return ageBuckets;
+                })()}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#e0e3e7" />
+                <XAxis dataKey="name" tick={{ fill: '#5f6368', fontSize: 10 }} />
+                <YAxis tick={{ fill: '#5f6368', fontSize: 12 }} />
+                <Tooltip contentStyle={{ borderRadius: '12px', border: '1px solid #e0e3e7', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }} />
+                <Bar dataKey="count" name="Pending Cases" radius={[8, 8, 0, 0]}>
+                  {[0, 1, 2, 3, 4].map((index) => (
+                    <Cell key={`cell-${index}`} fill={['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#991b1b'][index]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+
+            <div className="mt-4 p-4 bg-[#fef2f2] rounded-xl border border-[#ef4444]/30">
+              <p className="text-sm font-semibold text-[#991b1b]">
+                ⚠️ {filteredCaseHistory.filter(c => c.outcome === 'Pending' && 
+                  (new Date().getTime() - new Date(c.filingDate).getTime()) / (1000 * 60 * 60 * 24) > 730
+                ).length} cases older than 2 years need attention
+              </p>
+            </div>
+          </div>
+
+          {/* Settlement Rate Trend Over Time */}
+          <div className="bg-white rounded-2xl border border-[#e0e3e7] p-6 shadow-sm">
+            <h2 className="text-lg font-bold text-[#1a2332] mb-2">Settlement Rate Trend Over Time</h2>
+            <p className="text-sm text-[#5f6368] mb-6">Quarterly settlement success rate showing ADR effectiveness</p>
+            
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart
+                data={(() => {
+                  const quarterlyData: Array<{ quarter: string; settlementRate: number; total: number }> = [];
+                  
+                  for (let year = 2022; year <= 2025; year++) {
+                    for (let q = 1; q <= 4; q++) {
+                      if (year === 2025 && q > 1) break;
+                      
+                      const startMonth = (q - 1) * 3;
+                      const endMonth = startMonth + 3;
+                      
+                      const quarterCases = filteredCaseHistory.filter(c => {
+                        const date = new Date(c.filingDate);
+                        return date.getFullYear() === year && 
+                               date.getMonth() >= startMonth && 
+                               date.getMonth() < endMonth;
+                      });
+                      
+                      const settled = quarterCases.filter(c => c.outcome === 'Settled').length;
+                      const rate = quarterCases.length > 0 ? ((settled / quarterCases.length) * 100).toFixed(1) : 0;
+                      
+                      quarterlyData.push({
+                        quarter: `Q${q} ${year}`,
+                        settlementRate: parseFloat(rate.toString()),
+                        total: quarterCases.length
+                      });
+                    }
+                  }
+                  
+                  return quarterlyData;
+                })()}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#e0e3e7" />
+                <XAxis dataKey="quarter" tick={{ fill: '#5f6368', fontSize: 10 }} angle={-45} textAnchor="end" height={80} />
+                <YAxis tick={{ fill: '#5f6368', fontSize: 12 }} label={{ value: 'Settlement %', angle: -90, position: 'insideLeft' }} />
+                <Tooltip 
+                  contentStyle={{ borderRadius: '12px', border: '1px solid #e0e3e7', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                  formatter={(value: any, name: string, props: any) => [`${value}% (${props.payload.total} cases)`, 'Settlement Rate']}
+                />
+                <Bar dataKey="settlementRate" fill="#10b981" name="Settlement Rate" radius={[8, 8, 0, 0]}>
+                  {Array(13).fill(0).map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={`hsl(${142 + index * 5}, 70%, ${45 + (index % 3) * 5}%)`} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
