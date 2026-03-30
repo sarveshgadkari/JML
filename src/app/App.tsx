@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Scale, UserCircle, LogIn } from "lucide-react";
+import { Scale, UserCircle, LogIn, Menu, X } from "lucide-react";
 import LandingPage from "./components/LandingPage";
 import Sidebar from "./components/Sidebar";
 import LoginModal from "./components/LoginModal";
@@ -34,6 +34,7 @@ export default function App() {
     null,
   );
   const [detailBackView, setDetailBackView] = useState<string>("lawyers");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleLogin = async (
     email: string,
@@ -83,6 +84,12 @@ export default function App() {
     setUserRole(null);
     setIsAdmin(false);
     setCurrentView("landing");
+    setMobileMenuOpen(false);
+  };
+
+  const navigateTo = (view: string) => {
+    setCurrentView(view);
+    setMobileMenuOpen(false);
   };
 
   const openLoginModal = (role: "client" | "lawyer") => {
@@ -125,42 +132,40 @@ export default function App() {
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between h-16">
               <button
-                onClick={() => setCurrentView("landing")}
+                onClick={() => navigateTo("landing")}
                 className="flex items-center gap-2 group"
               >
                 <div className="bg-gradient-to-br from-[#1a2332] to-[#2d3d54] p-2 rounded-xl">
-                  <Scale className="w-6 h-6 text-[#d4a574]" />
+                  <Scale className="w-5 h-5 sm:w-6 sm:h-6 text-[#d4a574]" />
                 </div>
-                <span className="font-bold text-xl text-[#1a2332] group-hover:text-[#1e40af] transition-colors">
+                <span className="font-bold text-base sm:text-xl text-[#1a2332] group-hover:text-[#1e40af] transition-colors">
                   Judge My Lawyer
                 </span>
               </button>
 
-              <div className="flex items-center gap-6">
+              <div className="hidden md:flex items-center gap-6">
                 {!userRole ? (
                   <>
                     <button
-                      onClick={() =>
-                        setCurrentView("lawyers")
-                      }
+                      onClick={() => navigateTo("lawyers")}
                       className="text-[#5f6368] hover:text-[#1e40af] font-semibold transition-colors"
                     >
                       Lawyers
                     </button>
                     <button
-                      onClick={() => setCurrentView("judges")}
+                      onClick={() => navigateTo("judges")}
                       className="text-[#5f6368] hover:text-[#7c3aed] font-semibold transition-colors"
                     >
                       Judges
                     </button>
                     <button
-                      onClick={() => setCurrentView("courts")}
+                      onClick={() => navigateTo("courts")}
                       className="text-[#5f6368] hover:text-[#047857] font-semibold transition-colors"
                     >
                       Courts
                     </button>
                     <button
-                      onClick={() => setCurrentView("search")}
+                      onClick={() => navigateTo("search")}
                       className="text-[#5f6368] hover:text-[#1a2332] font-semibold transition-colors"
                     >
                       Find a Lawyer
@@ -176,36 +181,32 @@ export default function App() {
                 ) : (
                   <>
                     <button
-                      onClick={() =>
-                        setCurrentView("lawyers")
-                      }
+                      onClick={() => navigateTo("lawyers")}
                       className="text-[#5f6368] hover:text-[#1e40af] font-semibold transition-colors"
                     >
                       Lawyers
                     </button>
                     <button
-                      onClick={() => setCurrentView("judges")}
+                      onClick={() => navigateTo("judges")}
                       className="text-[#5f6368] hover:text-[#7c3aed] font-semibold transition-colors"
                     >
                       Judges
                     </button>
                     <button
-                      onClick={() => setCurrentView("courts")}
+                      onClick={() => navigateTo("courts")}
                       className="text-[#5f6368] hover:text-[#047857] font-semibold transition-colors"
                     >
                       Courts
                     </button>
                     <button
-                      onClick={() => setCurrentView("search")}
+                      onClick={() => navigateTo("search")}
                       className="text-[#5f6368] hover:text-[#1a2332] font-semibold transition-colors"
                     >
                       Find a Lawyer
                     </button>
                     {userRole === "lawyer" && !isAdmin && (
                       <button
-                        onClick={() =>
-                          setCurrentView("lawyer-dashboard")
-                        }
+                        onClick={() => navigateTo("lawyer-dashboard")}
                         className="text-[#5f6368] hover:text-[#1a2332] font-semibold transition-colors"
                       >
                         My Profile
@@ -213,9 +214,7 @@ export default function App() {
                     )}
                     {userRole === "lawyer" && isAdmin && (
                       <button
-                        onClick={() =>
-                          setCurrentView("admin-dashboard")
-                        }
+                        onClick={() => navigateTo("admin-dashboard")}
                         className="text-[#5f6368] hover:text-[#1a2332] font-semibold transition-colors"
                       >
                         Admin Panel
@@ -223,9 +222,7 @@ export default function App() {
                     )}
                     {userRole === "client" && (
                       <button
-                        onClick={() =>
-                          setCurrentView("client-dashboard")
-                        }
+                        onClick={() => navigateTo("client-dashboard")}
                         className="text-[#5f6368] hover:text-[#1a2332] font-semibold transition-colors"
                       >
                         My Dashboard
@@ -245,17 +242,73 @@ export default function App() {
                   </>
                 )}
               </div>
+
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen((prev) => !prev)}
+                className="md:hidden inline-flex items-center justify-center rounded-lg border border-[#e0e3e7] p-2 text-[#1a2332]"
+                aria-label="Toggle navigation menu"
+              >
+                {mobileMenuOpen ? (
+                  <X className="h-5 w-5" />
+                ) : (
+                  <Menu className="h-5 w-5" />
+                )}
+              </button>
             </div>
+
+            {mobileMenuOpen && (
+              <div className="md:hidden border-t border-[#e0e3e7] py-3">
+                <div className="flex flex-col gap-2">
+                  <button onClick={() => navigateTo("lawyers")} className="text-left rounded-lg px-3 py-2 text-[#1a2332] hover:bg-[#f5f7fa]">Lawyers</button>
+                  <button onClick={() => navigateTo("judges")} className="text-left rounded-lg px-3 py-2 text-[#1a2332] hover:bg-[#f5f7fa]">Judges</button>
+                  <button onClick={() => navigateTo("courts")} className="text-left rounded-lg px-3 py-2 text-[#1a2332] hover:bg-[#f5f7fa]">Courts</button>
+                  <button onClick={() => navigateTo("search")} className="text-left rounded-lg px-3 py-2 text-[#1a2332] hover:bg-[#f5f7fa]">Find a Lawyer</button>
+
+                  {!userRole && (
+                    <button
+                      onClick={() => {
+                        openLoginModal("client");
+                        setMobileMenuOpen(false);
+                      }}
+                      className="mt-2 flex items-center justify-center gap-2 bg-gradient-to-r from-[#1e40af] to-[#3b82f6] text-white px-5 py-2.5 rounded-xl font-semibold"
+                    >
+                      <LogIn className="w-4 h-4" />
+                      Login
+                    </button>
+                  )}
+
+                  {userRole === "lawyer" && !isAdmin && (
+                    <button onClick={() => navigateTo("lawyer-dashboard")} className="text-left rounded-lg px-3 py-2 text-[#1a2332] hover:bg-[#f5f7fa]">My Profile</button>
+                  )}
+                  {userRole === "lawyer" && isAdmin && (
+                    <button onClick={() => navigateTo("admin-dashboard")} className="text-left rounded-lg px-3 py-2 text-[#1a2332] hover:bg-[#f5f7fa]">Admin Panel</button>
+                  )}
+                  {userRole === "client" && (
+                    <button onClick={() => navigateTo("client-dashboard")} className="text-left rounded-lg px-3 py-2 text-[#1a2332] hover:bg-[#f5f7fa]">My Dashboard</button>
+                  )}
+
+                  {userRole && (
+                    <button
+                      onClick={handleLogout}
+                      className="mt-2 rounded-lg px-3 py-2 text-left font-semibold text-[#b91c1c] hover:bg-red-50"
+                    >
+                      Logout
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </nav>
       )}
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         <div className="lg:grid lg:grid-cols-12 lg:gap-6">
           {/* Sidebar - visible on large screens */}
           <div className="hidden lg:block lg:col-span-3">
-            <Sidebar />
+            <Sidebar onNavigate={navigateTo} />
           </div>
 
           {/* Primary content */}

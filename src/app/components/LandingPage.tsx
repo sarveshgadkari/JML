@@ -389,15 +389,15 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
           <div className="absolute bottom-10 right-10 w-72 h-72 bg-[#3b82f6] rounded-full blur-3xl" />
         </div>
 
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-12">
           <div className="text-center">
-            <h1 className="text-5xl font-bold mb-3 tracking-tight">
+            <h1 className="text-3xl sm:text-5xl font-bold mb-3 tracking-tight">
               Judge My <span className="text-[#d4a574]">Lawyer</span>
             </h1>
-            <p className="text-lg mb-6 text-white/80 max-w-2xl mx-auto">
+            <p className="text-base sm:text-lg mb-6 text-white/80 max-w-2xl mx-auto">
               India's Premier Legal Analytics Platform - Make informed decisions with verified performance data
             </p>
-            <div className="flex justify-center gap-3">
+            <div className="flex flex-col sm:flex-row justify-center gap-3">
               <button
                 onClick={() => onNavigate("search")}
                 className="group bg-white text-[#1a2332] px-6 py-3 rounded-xl font-semibold hover:bg-[#d4a574] hover:text-white transition-all duration-300 shadow-xl flex items-center gap-2"
@@ -423,19 +423,19 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
 
       {/* Rankings Section */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
           <div>
-            <h2 className="text-3xl font-bold text-[#1a2332]">Top Ranked Professionals</h2>
+            <h2 className="text-2xl sm:text-3xl font-bold text-[#1a2332]">Top Ranked Professionals</h2>
             <p className="text-[#5f6368] mt-1">
               {hasActiveFilters(activeTab) ? "Filtered and re-ranked based on your criteria" : "Discover India's highest-performing legal professionals"}
             </p>
           </div>
 
           {/* Tabs (Figma gradients per tab) */}
-          <div className="inline-flex bg-white rounded-xl p-1 shadow-lg border border-[#e0e3e7]">
+          <div className="inline-flex w-full md:w-auto bg-white rounded-xl p-1 shadow-lg border border-[#e0e3e7] overflow-x-auto">
             <button
               onClick={() => setActiveTab("lawyers")}
-              className={`px-6 py-2.5 rounded-lg font-semibold transition-all duration-300 text-sm ${
+              className={`px-4 sm:px-6 py-2.5 rounded-lg font-semibold transition-all duration-300 text-sm whitespace-nowrap ${
                 activeTab === "lawyers"
                   ? "bg-gradient-to-r from-[#1e40af] to-[#3b82f6] text-white shadow-md"
                   : "text-[#5f6368] hover:text-[#1a2332]"
@@ -445,7 +445,7 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
             </button>
             <button
               onClick={() => setActiveTab("judges")}
-              className={`px-6 py-2.5 rounded-lg font-semibold transition-all duration-300 text-sm ${
+              className={`px-4 sm:px-6 py-2.5 rounded-lg font-semibold transition-all duration-300 text-sm whitespace-nowrap ${
                 activeTab === "judges"
                   ? "bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-md"
                   : "text-[#5f6368] hover:text-[#1a2332]"
@@ -455,7 +455,7 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
             </button>
             <button
               onClick={() => setActiveTab("courts")}
-              className={`px-6 py-2.5 rounded-lg font-semibold transition-all duration-300 text-sm ${
+              className={`px-4 sm:px-6 py-2.5 rounded-lg font-semibold transition-all duration-300 text-sm whitespace-nowrap ${
                 activeTab === "courts"
                   ? "bg-gradient-to-r from-[#047857] to-[#10b981] text-white shadow-md"
                   : "text-[#5f6368] hover:text-[#1a2332]"
@@ -473,7 +473,7 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
           <>
             {/* Filters */}
             <div className="bg-white rounded-xl border border-[#e0e3e7] p-5 mb-6 shadow-sm">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <Filter className="w-5 h-5 text-[#1e40af]" />
                   <h3 className="font-bold text-[#1a2332]">Filter Lawyers</h3>
@@ -481,7 +481,7 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
                     <span className="bg-[#1e40af] text-white text-xs px-2 py-1 rounded-full font-semibold">Active</span>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-[#5f6368]">Rank by:</span>
                   <div className="inline-flex rounded-lg p-1 bg-[#f0f2f5] border border-[#e0e3e7]">
                     <button
@@ -520,7 +520,7 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
                   </div>
                 </div>
                 {hasActiveFilters("lawyers") && (
-                  <button onClick={clearLawyerFilters} className="flex items-center gap-1 text-sm text-[#b91c1c] hover:text-[#991b1b] font-semibold">
+                  <button onClick={clearLawyerFilters} className="flex items-center gap-1 text-sm text-[#b91c1c] hover:text-[#991b1b] font-semibold self-start lg:self-auto">
                     <X className="w-4 h-4" />
                     Clear All
                   </button>
@@ -817,7 +817,7 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
         {activeTab === "judges" && (
           <>
             <div className="bg-white rounded-xl border border-[#e0e3e7] p-5 mb-6 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <Filter className="w-5 h-5 text-[#7c3aed]" />
                   <h3 className="font-bold text-[#1a2332]">Filter Judges</h3>
@@ -962,7 +962,7 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
         {activeTab === "courts" && (
           <>
             <div className="bg-white rounded-xl border border-[#e0e3e7] p-5 mb-6 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <Filter className="w-5 h-5 text-[#047857]" />
                   <h3 className="font-bold text-[#1a2332]">Filter Courts</h3>

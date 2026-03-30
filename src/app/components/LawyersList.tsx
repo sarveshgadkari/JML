@@ -238,7 +238,7 @@ export default function LawyersList({ onViewDetails }: LawyersListProps) {
 
       <div className="space-y-4">
         {/* Rank buttons */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-col gap-4 md:flex-row md:flex-wrap md:items-center">
           <span className="text-sm font-semibold text-[#5f6368]">Rank by:</span>
           <div className="inline-flex rounded-lg p-1 bg-[#f0f2f5] border border-[#e0e3e7]">
             <button
@@ -260,7 +260,7 @@ export default function LawyersList({ onViewDetails }: LawyersListProps) {
               Experience
             </button>
           </div>
-          <div className="ml-auto flex items-end gap-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 md:ml-auto md:flex md:items-end md:gap-4">
             <div>
               <label className="block text-sm font-semibold text-[#1a2332] mb-1">Min cases</label>
               <input
@@ -268,7 +268,7 @@ export default function LawyersList({ onViewDetails }: LawyersListProps) {
                 min={0}
                 value={minCases}
                 onChange={(e) => setMinCases(Number(e.target.value || 0))}
-                className="px-3 py-2 border border-[#e0e3e7] rounded-lg text-sm w-28"
+                className="px-3 py-2 border border-[#e0e3e7] rounded-lg text-sm w-full sm:w-28"
                 placeholder="0"
               />
             </div>
@@ -280,7 +280,7 @@ export default function LawyersList({ onViewDetails }: LawyersListProps) {
                 max={100}
                 value={minWinRate}
                 onChange={(e) => setMinWinRate(Number(e.target.value || 0))}
-                className="px-3 py-2 border border-[#e0e3e7] rounded-lg text-sm w-28"
+                className="px-3 py-2 border border-[#e0e3e7] rounded-lg text-sm w-full sm:w-28"
                 placeholder="0"
               />
             </div>
@@ -289,7 +289,7 @@ export default function LawyersList({ onViewDetails }: LawyersListProps) {
               <select
                 value={metricSort}
                 onChange={(e) => setMetricSort(e.target.value as any)}
-                className="px-3 py-2 border border-[#e0e3e7] rounded-lg text-sm"
+                className="px-3 py-2 border border-[#e0e3e7] rounded-lg text-sm w-full"
               >
                 <option value="none">Tri‑Factor (above)</option>
                 <option value="win">Win % (desc)</option>
@@ -377,8 +377,8 @@ export default function LawyersList({ onViewDetails }: LawyersListProps) {
               className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-lg transition cursor-pointer"
               onClick={() => onViewDetails(lawyer.id)}
             >
-              <div className="flex items-start justify-between">
-                <div className="flex gap-4 flex-1">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div className="flex gap-4 flex-1 min-w-0">
                   {/* Rank Badge */}
                   <div className="flex-shrink-0">
                     <div
@@ -399,8 +399,8 @@ export default function LawyersList({ onViewDetails }: LawyersListProps) {
                   </div>
 
                   {/* Lawyer Info */}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-1">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-1">
                       <h2 className="text-xl font-semibold text-gray-900">{lawyer.name ?? "Unnamed Lawyer"}</h2>
                       {status === "claimed" ? (
                         <span className="flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded-full border border-green-200">
@@ -462,7 +462,7 @@ export default function LawyersList({ onViewDetails }: LawyersListProps) {
                 </div>
 
                 {/* Stats */}
-                <div className="grid grid-cols-2 gap-4 ml-6">
+                <div className="grid grid-cols-2 gap-4 xl:ml-6 shrink-0">
                   <div className="text-center">
                     <div className="flex items-center justify-center gap-1 mb-1">
                       <TrendingUp className="w-4 h-4 text-green-600" />
@@ -504,7 +504,7 @@ export default function LawyersList({ onViewDetails }: LawyersListProps) {
                     <div className="bg-yellow-500" style={{ width: `${ss}%` }} />
                   </div>
                 </div>
-                <div className="flex gap-4 text-xs text-gray-600">
+                <div className="flex flex-wrap gap-3 sm:gap-4 text-xs text-gray-600">
                   <span className="flex items-center gap-1">
                     <span className="w-2 h-2 bg-green-500 rounded-full" />
                     Won: {Number(lawyer.win_rate ?? 0).toFixed(1)}%
