@@ -154,7 +154,7 @@ export default function AnalyticsDashboard({
           </CardHeader>
           <CardContent className="relative pb-10">
             <TopJudgesOutcomeChart data={topJudges} />
-            <div className="absolute bottom-3 right-4 text-xs text-slate-400">{baseText}</div>
+            <div className="absolute bottom-3 right-4 text-xs text-slate-400">{txt(caseBase)}</div>
           </CardContent>
         </Card>
       )}
