@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Scale, UserCircle, LogIn, Menu, X } from "lucide-react";
 import LandingPage from "./components/LandingPage";
 import Sidebar from "./components/Sidebar";
@@ -19,6 +19,94 @@ import { getCurrentSession, checkCurrentUserAdmin } from "../utils/auth";
 
 export type UserRole = "client" | "lawyer" | null;
 
+type ParsedRoute = {
+  view: string;
+  selectedId: string | null;
+  detailBackView?: string;
+};
+
+const toPath = (
+  view: string,
+  selectedId?: string | null,
+  detailBackView?: string,
+) => {
+  if (view === "landing") return "/";
+  if (view === "lawyers") return "/lawyers";
+  if (view === "judges") return "/judges";
+  if (view === "courts") return "/courts";
+  if (view === "search") return "/search";
+  if (view === "lawyer-dashboard") return "/dashboard/lawyer";
+  if (view === "client-dashboard") return "/dashboard/client";
+  if (view === "admin-dashboard") return "/dashboard/admin";
+
+  if (view === "lawyer-details" && selectedId) {
+    const fromSearch = detailBackView === "search" ? "?from=search" : "";
+    return `/lawyers/${encodeURIComponent(selectedId)}${fromSearch}`;
+  }
+  if (view === "judge-details" && selectedId) {
+    return `/judges/${encodeURIComponent(selectedId)}`;
+  }
+  if (view === "court-details" && selectedId) {
+    return `/courts/${encodeURIComponent(selectedId)}`;
+  }
+
+  return "/";
+};
+
+const parsePathRoute = (pathname: string, search: string): ParsedRoute => {
+  const normalizedPath = pathname.trim() || "/";
+  const path = normalizedPath.startsWith("/") ? normalizedPath : `/${normalizedPath}`;
+  const segments = path.split("/").filter(Boolean);
+  const query = new URLSearchParams(search ?? "");
+
+  if (segments.length === 0) {
+    return { view: "landing", selectedId: null };
+  }
+
+  if (segments[0] === "lawyers") {
+    if (segments[1]) {
+      return {
+        view: "lawyer-details",
+        selectedId: decodeURIComponent(segments[1]),
+        detailBackView: query.get("from") === "search" ? "search" : "lawyers",
+      };
+    }
+    return { view: "lawyers", selectedId: null };
+  }
+
+  if (segments[0] === "judges") {
+    if (segments[1]) {
+      return {
+        view: "judge-details",
+        selectedId: decodeURIComponent(segments[1]),
+      };
+    }
+    return { view: "judges", selectedId: null };
+  }
+
+  if (segments[0] === "courts") {
+    if (segments[1]) {
+      return {
+        view: "court-details",
+        selectedId: decodeURIComponent(segments[1]),
+      };
+    }
+    return { view: "courts", selectedId: null };
+  }
+
+  if (segments[0] === "search") {
+    return { view: "search", selectedId: null };
+  }
+
+  if (segments[0] === "dashboard") {
+    if (segments[1] === "lawyer") return { view: "lawyer-dashboard", selectedId: null };
+    if (segments[1] === "client") return { view: "client-dashboard", selectedId: null };
+    if (segments[1] === "admin") return { view: "admin-dashboard", selectedId: null };
+  }
+
+  return { view: "landing", selectedId: null };
+};
+
 export default function App() {
   const [currentView, setCurrentView] =
     useState<string>("landing");
@@ -35,6 +123,41 @@ export default function App() {
   );
   const [detailBackView, setDetailBackView] = useState<string>("lawyers");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const applyRouteFromUrl = () => {
+      const parsed = parsePathRoute(window.location.pathname, window.location.search);
+      setCurrentView(parsed.view);
+      setSelectedId(parsed.selectedId);
+      if (parsed.detailBackView) {
+        setDetailBackView(parsed.detailBackView);
+      }
+    };
+
+    applyRouteFromUrl();
+    window.addEventListener("popstate", applyRouteFromUrl);
+
+    return () => {
+      window.removeEventListener("popstate", applyRouteFromUrl);
+    };
+  }, []);
+
+  const pushUrl = (
+    view: string,
+    id?: string | null,
+    backView?: string,
+    replace = false,
+  ) => {
+    const nextPath = toPath(view, id, backView);
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current === nextPath) return;
+
+    if (replace) {
+      window.history.replaceState(null, "", nextPath);
+    } else {
+      window.history.pushState(null, "", nextPath);
+    }
+  };
 
   const handleLogin = async (
     email: string,
@@ -61,17 +184,17 @@ export default function App() {
 
           // Redirect based on admin status
           if (isAdminUser) {
-            setCurrentView("admin-dashboard");
+            navigateTo("admin-dashboard");
           } else {
-            setCurrentView("lawyer-dashboard");
+            navigateTo("lawyer-dashboard");
           }
         } catch (error) {
           console.error('Error checking admin status:', error);
           // Default to lawyer dashboard if check fails
-          setCurrentView("lawyer-dashboard");
+          navigateTo("lawyer-dashboard");
         }
       } else if (role === "client") {
-        setCurrentView("client-dashboard");
+        navigateTo("client-dashboard");
       }
 
       setShowLoginModal(false);
@@ -84,11 +207,17 @@ export default function App() {
     setUserRole(null);
     setIsAdmin(false);
     setCurrentView("landing");
+    setSelectedId(null);
+    pushUrl("landing");
     setMobileMenuOpen(false);
   };
 
   const navigateTo = (view: string) => {
     setCurrentView(view);
+    if (!view.includes("-details")) {
+      setSelectedId(null);
+    }
+    pushUrl(view);
     setMobileMenuOpen(false);
   };
 
@@ -106,22 +235,26 @@ export default function App() {
     setSelectedId(id);
     setDetailBackView("lawyers");
     setCurrentView("lawyer-details");
+    pushUrl("lawyer-details", id, "lawyers");
   };
 
   const viewLawyerDetailsFromSearch = (id: string) => {
     setSelectedId(id);
     setDetailBackView("search");
     setCurrentView("lawyer-details");
+    pushUrl("lawyer-details", id, "search");
   };
 
   const viewJudgeDetails = (id: string) => {
     setSelectedId(id);
     setCurrentView("judge-details");
+    pushUrl("judge-details", id);
   };
 
   const viewCourtDetails = (id: string) => {
     setSelectedId(id);
     setCurrentView("court-details");
+    pushUrl("court-details", id);
   };
 
   return (
@@ -315,7 +448,7 @@ export default function App() {
           <div className="lg:col-span-9">
             {currentView === "landing" && (
               <LandingPage
-                onNavigate={setCurrentView}
+                onNavigate={navigateTo}
                 onLogin={openLoginModal}
                 onViewLawyerDetails={viewLawyerDetails}
                 onViewJudgeDetails={viewJudgeDetails}
@@ -334,19 +467,19 @@ export default function App() {
         {currentView === "lawyer-details" && selectedId && (
           <LawyerDetails
             lawyerId={selectedId}
-            onBack={() => setCurrentView(detailBackView)}
+            onBack={() => navigateTo(detailBackView)}
           />
         )}
         {currentView === "judge-details" && selectedId && (
           <JudgeDetails
             judgeId={selectedId}
-            onBack={() => setCurrentView("judges")}
+            onBack={() => navigateTo("judges")}
           />
         )}
         {currentView === "court-details" && selectedId && (
           <CourtDetails
             courtId={selectedId}
-            onBack={() => setCurrentView("courts")}
+            onBack={() => navigateTo("courts")}
           />
         )}
         {currentView === "search" && (
@@ -364,7 +497,7 @@ export default function App() {
           userRole === "lawyer" &&
           isAdmin && (
             <AdminDashboard
-              onSwitchToLawyer={() => setCurrentView("lawyer-dashboard")}
+              onSwitchToLawyer={() => navigateTo("lawyer-dashboard")}
             />
           )}
           </div>

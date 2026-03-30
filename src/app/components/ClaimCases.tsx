@@ -272,9 +272,9 @@ export default function ClaimCases({ lawyerId, lawyerName }: ClaimCasesProps) {
                     : 'border-[#e0e3e7] hover:border-[#3b82f6]'
                 }`}
               >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
                       <h3 className="font-bold text-lg text-[#1a2332]">{caseItem.case_number}</h3>
                       {caseItem.already_claimed_by_lawyer ? (
                         <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded">
@@ -289,7 +289,7 @@ export default function ClaimCases({ lawyerId, lawyerName }: ClaimCasesProps) {
 
                     <p className="text-sm font-semibold text-[#1a2332] mb-2">{caseItem.case_title}</p>
 
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm text-[#5f6368] mb-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm text-[#5f6368] mb-3">
                       <div className="flex items-center gap-2">
                         <Scale className="w-4 h-4" />
                         <span>{caseItem.court_name}</span>
@@ -308,7 +308,7 @@ export default function ClaimCases({ lawyerId, lawyerName }: ClaimCasesProps) {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 p-3 bg-gray-50 rounded-lg">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 p-3 bg-gray-50 rounded-lg">
                       <div>
                         <p className="text-xs text-[#5f6368]">Complainant Lawyer</p>
                         <p className="font-semibold text-[#1a2332]">{caseItem.complainant_lawyer}</p>
@@ -343,7 +343,7 @@ export default function ClaimCases({ lawyerId, lawyerName }: ClaimCasesProps) {
               <label className="block text-sm font-semibold text-[#1a2332] mb-2">
                 Your Role in this Case *
               </label>
-              <div className="flex gap-3">
+              <div className="flex flex-col sm:flex-row gap-3">
                 <button
                   onClick={() => setSelectedRole('complainant')}
                   className={`flex-1 py-3 px-4 rounded-xl font-semibold transition-colors ${

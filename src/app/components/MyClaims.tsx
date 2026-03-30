@@ -156,7 +156,7 @@ export default function MyClaims({ lawyerId }: MyClaimsProps) {
       </div>
 
       {/* Filter Tabs */}
-      <div className="bg-white rounded-xl border border-[#e0e3e7] p-1 shadow-sm mb-6 flex gap-1">
+      <div className="bg-white rounded-xl border border-[#e0e3e7] p-1 shadow-sm mb-6 grid grid-cols-2 sm:grid-cols-4 gap-1">
         {(['all', 'pending', 'approved', 'rejected'] as const).map((status) => (
           <button
             key={status}
@@ -179,11 +179,11 @@ export default function MyClaims({ lawyerId }: MyClaimsProps) {
             key={claim.id}
             className="bg-white rounded-2xl border border-[#e0e3e7] p-6 shadow-sm hover:shadow-md transition-shadow"
           >
-            <div className="flex items-start justify-between mb-4">
-              <div className="flex items-start gap-3 flex-1">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+              <div className="flex items-start gap-3 flex-1 min-w-0">
                 {getStatusIcon(claim.status)}
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
                     <h3 className="font-bold text-lg text-[#1a2332]">{claim.card_name}</h3>
                     <span className={`px-3 py-1 rounded-full text-xs font-semibold uppercase border ${getStatusColor(claim.status)}`}>
                       {claim.status}
@@ -202,7 +202,7 @@ export default function MyClaims({ lawyerId }: MyClaimsProps) {
 
               <button
                 onClick={() => setSelectedClaim(claim)}
-                className="px-4 py-2 text-[#1e3a8a] hover:bg-blue-50 rounded-lg transition-colors font-semibold flex items-center gap-2"
+                className="px-4 py-2 text-[#1e3a8a] hover:bg-blue-50 rounded-lg transition-colors font-semibold flex items-center gap-2 self-start"
               >
                 <Eye className="w-4 h-4" />
                 View Details
@@ -210,7 +210,7 @@ export default function MyClaims({ lawyerId }: MyClaimsProps) {
             </div>
 
             {/* Card Stats */}
-            <div className="grid grid-cols-3 gap-4 mb-4 p-4 bg-gray-50 rounded-xl">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-4 p-4 bg-gray-50 rounded-xl">
               <div>
                 <p className="text-xs text-[#5f6368]">Total Cases</p>
                 <p className="font-bold text-[#1a2332]">{claim.total_cases}</p>
@@ -290,7 +290,7 @@ export default function MyClaims({ lawyerId }: MyClaimsProps) {
           <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-[#e0e3e7] p-6">
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-[#1a2332]">Claim Details</h2>
+                <h2 className="text-xl sm:text-2xl font-bold text-[#1a2332]">Claim Details</h2>
                 <button
                   onClick={() => setSelectedClaim(null)}
                   className="text-[#5f6368] hover:text-[#1a2332]"
@@ -335,7 +335,7 @@ export default function MyClaims({ lawyerId }: MyClaimsProps) {
               {/* Statistics */}
               <div>
                 <label className="block text-sm font-semibold text-[#5f6368] mb-2">Card Statistics</label>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="p-4 bg-blue-50 rounded-xl">
                     <p className="text-sm text-blue-700">Total Cases</p>
                     <p className="text-2xl font-bold text-blue-900">{selectedClaim.total_cases}</p>
@@ -368,7 +368,7 @@ export default function MyClaims({ lawyerId }: MyClaimsProps) {
               )}
 
               {/* Timestamps */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-[#5f6368] mb-2">Submitted</label>
                   <p className="text-[#1a2332]">{formatDate(selectedClaim.created_at)}</p>

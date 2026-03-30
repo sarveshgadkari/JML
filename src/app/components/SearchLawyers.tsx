@@ -174,8 +174,8 @@ export default function SearchLawyers({ onViewDetails }: SearchLawyersProps) {
               className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-lg transition cursor-pointer"
               onClick={() => onViewDetails(lawyer.id)}
             >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-2">
                     <h2 className="text-xl font-semibold text-gray-900">{lawyer.name}</h2>
                     <span className="px-3 py-1 bg-blue-50 text-blue-700 text-sm rounded-full">
@@ -209,7 +209,7 @@ export default function SearchLawyers({ onViewDetails }: SearchLawyersProps) {
                 </div>
 
                 {/* Stats */}
-                <div className="grid grid-cols-2 gap-4 ml-6">
+                <div className="grid grid-cols-2 gap-4 lg:ml-6 shrink-0">
                   <div className="text-center bg-green-50 p-3 rounded-lg">
                     <div className="flex items-center justify-center gap-1 mb-1">
                       <TrendingUp className="w-4 h-4 text-green-600" />
@@ -244,7 +244,7 @@ export default function SearchLawyers({ onViewDetails }: SearchLawyersProps) {
               {/* Contact Info */}
               {(lawyer.contactEmail || lawyer.contactPhone) && (
                 <div className="mt-4 pt-4 border-t border-gray-100">
-                  <div className="flex gap-4 text-sm">
+                  <div className="flex flex-wrap gap-3 sm:gap-4 text-sm">
                     {lawyer.contactEmail && (
                       <a
                         href={`mailto:${lawyer.contactEmail}`}

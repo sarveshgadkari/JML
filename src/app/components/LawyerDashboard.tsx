@@ -512,17 +512,17 @@ export default function LawyerDashboard() {
               <div className="bg-gradient-to-r from-[#1e3a8a] to-[#1e40af] p-6 text-white relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-5 rounded-full -mr-32 -mt-32"></div>
                 <div className="relative z-10">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+                    <div className="flex items-center gap-3 sm:gap-4 min-w-0">
                       <div className="w-20 h-20 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-3xl font-bold border-2 border-white/30">
                         {profile.name.charAt(0)}
                       </div>
-                      <div>
-                        <h3 className="text-2xl font-bold mb-1">{profile.name}</h3>
+                      <div className="min-w-0">
+                        <h3 className="text-xl sm:text-2xl font-bold mb-1 break-words">{profile.name}</h3>
                         <p className="text-blue-100 text-sm">{profile.bar_registration}</p>
                       </div>
                     </div>
-                    <div className="flex flex-col items-end gap-2">
+                    <div className="flex flex-col items-start sm:items-end gap-2">
                       <div className="px-4 py-1.5 bg-amber-400 text-amber-900 rounded-full text-sm font-bold flex items-center gap-1">
                         <Award className="w-4 h-4" />
                         Rank #{profile.stats.rank}
@@ -537,7 +537,7 @@ export default function LawyerDashboard() {
 
               {/* Stats Bar */}
               <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b-2 border-gray-200">
-                <div className="grid grid-cols-4 divide-x divide-gray-300">
+                <div className="grid grid-cols-2 sm:grid-cols-4 sm:divide-x divide-gray-300">
                   <div className="p-4 text-center">
                     <div className="text-2xl font-bold text-blue-600">{profile.stats.totalCases}</div>
                     <div className="text-xs text-gray-600 font-medium">Total Cases</div>
@@ -624,7 +624,7 @@ export default function LawyerDashboard() {
                 </div>
 
                 {/* Action Buttons */}
-                <div className="flex gap-3 pt-4">
+                <div className="flex flex-col sm:flex-row gap-3 pt-4">
                   <button className="flex-1 bg-gradient-to-r from-[#1e3a8a] to-[#1e40af] text-white py-3 px-4 rounded-lg font-semibold hover:from-[#1e40af] hover:to-[#1e3a8a] transition-all shadow-md hover:shadow-lg">
                     💾 Save Lawyer
                   </button>
@@ -654,7 +654,7 @@ export default function LawyerDashboard() {
                 <BarChart3 className="w-6 h-6 text-white" />
               </div>
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">Complete Analytics View</h2>
+                <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Complete Analytics View</h2>
                 <p className="text-sm text-gray-600">Detailed performance metrics that clients can explore</p>
               </div>
             </div>
@@ -669,7 +669,7 @@ export default function LawyerDashboard() {
               </div>
               
               <div className="p-6">
-                <div className="grid md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   {/* Win Rate Analysis */}
                   <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-6 rounded-xl border-2 border-green-200">
                     <div className="flex items-center justify-between mb-4">
@@ -741,7 +741,7 @@ export default function LawyerDashboard() {
               </div>
               
               <div className="p-6">
-                <div className="grid md:grid-cols-2 gap-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   {/* Pie Chart */}
                   <div>
                     <h4 className="font-semibold text-gray-900 mb-4">Outcome Breakdown</h4>
@@ -772,7 +772,7 @@ export default function LawyerDashboard() {
 
                   {/* Outcome Stats */}
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-green-50 rounded-lg border border-green-200">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-4 bg-green-50 rounded-lg border border-green-200">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
                           <span className="text-white text-xl">✓</span>
@@ -785,7 +785,7 @@ export default function LawyerDashboard() {
                       <div className="text-2xl font-bold text-green-600">{profile.stats.winRate}%</div>
                     </div>
 
-                    <div className="flex items-center justify-between p-4 bg-red-50 rounded-lg border border-red-200">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-4 bg-red-50 rounded-lg border border-red-200">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center">
                           <span className="text-white text-xl">✗</span>
@@ -798,7 +798,7 @@ export default function LawyerDashboard() {
                       <div className="text-2xl font-bold text-red-600">{profile.stats.lossRate}%</div>
                     </div>
 
-                    <div className="flex items-center justify-between p-4 bg-amber-50 rounded-lg border border-amber-200">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-4 bg-amber-50 rounded-lg border border-amber-200">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-amber-500 rounded-full flex items-center justify-center">
                           <span className="text-white text-xl">⚡</span>
@@ -825,7 +825,7 @@ export default function LawyerDashboard() {
               </div>
               
               <div className="p-6">
-                <div className="grid md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Case Duration Comparison */}
                   <div>
                     <h4 className="font-semibold text-gray-900 mb-4">Case Resolution Speed</h4>
@@ -929,7 +929,7 @@ export default function LawyerDashboard() {
                     
                     return (
                       <div key={idx} className="p-5 bg-gradient-to-r from-gray-50 to-slate-50 rounded-lg border-2 border-gray-200">
-                        <div className="flex items-center justify-between mb-4">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
                           <div className="flex items-center gap-3">
                             <div className="w-12 h-12 bg-red-500 rounded-lg flex items-center justify-center">
                               <Building2 className="w-6 h-6 text-white" />
@@ -945,7 +945,7 @@ export default function LawyerDashboard() {
                           </div>
                         </div>
                         
-                        <div className="grid grid-cols-3 gap-3 pt-3 border-t border-gray-300">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-gray-300">
                           <div className="text-center">
                             <div className="text-lg font-bold text-green-600">{courtStat.wins}</div>
                             <div className="text-xs text-gray-600">Won</div>
@@ -968,9 +968,9 @@ export default function LawyerDashboard() {
 
             {/* Final CTA */}
             <div className="bg-gradient-to-r from-[#1e3a8a] to-[#1e40af] rounded-xl p-8 text-center text-white">
-              <h3 className="text-2xl font-bold mb-2">Ready to Get Expert Legal Help?</h3>
+              <h3 className="text-xl sm:text-2xl font-bold mb-2">Ready to Get Expert Legal Help?</h3>
               <p className="text-blue-100 mb-6">Contact {profile.name} for a consultation today</p>
-              <div className="flex gap-4 justify-center">
+              <div className="flex flex-col sm:flex-row gap-4 justify-center">
                 <button className="bg-white text-[#1e3a8a] px-8 py-3 rounded-lg font-semibold hover:bg-blue-50 transition-all shadow-lg">
                   📞 Request Consultation
                 </button>

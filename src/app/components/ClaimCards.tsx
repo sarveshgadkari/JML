@@ -218,8 +218,8 @@ export default function ClaimCards({ lawyerId, lawyerName }: ClaimCardsProps) {
                     : 'border-[#e0e3e7] hover:border-[#3b82f6]'
                 }`}
               >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-3 flex-1">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
                     <div
                       className={`w-6 h-6 rounded-md border-2 flex items-center justify-center flex-shrink-0 mt-1 ${
                         selectedCards.includes(card.id)
@@ -230,15 +230,15 @@ export default function ClaimCards({ lawyerId, lawyerName }: ClaimCardsProps) {
                       {selectedCards.includes(card.id) && <Check className="w-4 h-4 text-white" />}
                     </div>
 
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
                         <h3 className="font-bold text-lg text-[#1a2332]">{card.name_in_judgment}</h3>
                         <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-semibold rounded">
                           UNCLAIMED
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-4 text-sm text-[#5f6368] mb-3">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-sm text-[#5f6368] mb-3">
                         <div className="flex items-center gap-1">
                           <Scale className="w-4 h-4" />
                           <span>{card.court_name}</span>
@@ -249,7 +249,7 @@ export default function ClaimCards({ lawyerId, lawyerName }: ClaimCardsProps) {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-5 gap-4">
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 sm:gap-4">
                         <div>
                           <p className="text-xs text-[#5f6368]">Total Cases</p>
                           <p className="font-bold text-[#1a2332]">{card.total_cases}</p>
@@ -285,7 +285,7 @@ export default function ClaimCards({ lawyerId, lawyerName }: ClaimCardsProps) {
         <div className="bg-gradient-to-r from-[#1e3a8a] to-[#3b82f6] rounded-2xl p-6 shadow-lg mb-6 text-white">
           <h2 className="text-xl font-bold mb-4">Selected Cards Summary ({selectedCards.length})</h2>
           
-          <div className="grid grid-cols-5 gap-4 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4 mb-4">
             <div className="bg-white/10 rounded-xl p-3">
               <p className="text-sm text-white/80">Total Cases</p>
               <p className="text-2xl font-bold">{aggregatedStats.totalCases}</p>

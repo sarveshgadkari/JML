@@ -738,7 +738,7 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
                     </div>
 
                     {/* Stats Grid */}
-                    <div className="grid grid-cols-3 gap-2 mt-auto">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-auto">
                       <div className="text-center bg-gradient-to-br from-[#ecfdf5] to-[#d1fae5] p-3 rounded-lg border border-[#10b981]/20">
                         <div className="flex items-center justify-center gap-1 mb-1">
                           <TrendingUp className="w-3.5 h-3.5 text-[#047857]" />
@@ -760,15 +760,15 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
                         </div>
                         <p className="text-[10px] font-bold text-[#78350f] uppercase">Settle</p>
                       </div>
-                      <div className="text-center bg-[#f0f2f5] p-2 rounded-lg col-span-3">
-                        <div className="flex items-center justify-center gap-3">
-                          <div className="flex items-center gap-1">
+                      <div className="text-center bg-[#f0f2f5] p-2 rounded-lg sm:col-span-3">
+                        <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                          <div className="flex items-center gap-1 whitespace-nowrap">
                             <Clock className="w-3.5 h-3.5 text-[#d97706]" />
                             <span className="text-sm font-bold text-[#1a2332]">{Math.round(lawyer.avg_case_duration_days ?? 0)}d</span>
                             <span className="text-xs text-[#5f6368]">avg duration</span>
                           </div>
-                          <div className="w-px h-4 bg-[#e0e3e7]" />
-                          <div className="flex items-center gap-1">
+                          <div className="hidden sm:block w-px h-4 bg-[#e0e3e7]" />
+                          <div className="flex items-center gap-1 whitespace-nowrap">
                             <Calendar className="w-3.5 h-3.5 text-[#7c3aed]" />
                             <span className="text-sm font-bold text-[#1a2332]">{Math.max(1, Math.round((lawyer.total_cases ?? 0) / 3))}</span>
                             <span className="text-xs text-[#5f6368]">hearings</span>
@@ -906,7 +906,7 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 mt-auto">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-auto">
                     <div className="text-center bg-gradient-to-br from-[#eff6ff] to-[#dbeafe] p-3 rounded-lg border border-[#3b82f6]/20">
                       <div className="flex items-center justify-center gap-1 mb-1">
                         <Scale className="w-3.5 h-3.5 text-[#1e40af]" />
@@ -1055,7 +1055,7 @@ export default function LandingPage({ onNavigate, onLogin, onViewLawyerDetails, 
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 mt-auto">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-auto">
                     <div className="text-center bg-gradient-to-br from-[#ecfdf5] to-[#d1fae5] p-3 rounded-lg border border-[#10b981]/20">
                       <div className="flex items-center justify-center gap-1 mb-1">
                         <Handshake className="w-3.5 h-3.5 text-[#047857]" />

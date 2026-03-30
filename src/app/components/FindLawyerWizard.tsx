@@ -690,7 +690,7 @@ export default function FindLawyerWizard({ onViewDetails }: { onViewDetails: (id
                         Score {Math.round(r.score)}
                       </span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <div className="text-center bg-gradient-to-br from-[#ecfdf5] to-[#d1fae5] p-2 rounded-lg border border-[#10b981]/20">
                         <div className="flex items-center justify-center gap-1 mb-0.5">
                           <TrendingUp className="w-3.5 h-3.5 text-[#047857]" />
@@ -712,15 +712,15 @@ export default function FindLawyerWizard({ onViewDetails }: { onViewDetails: (id
                         </div>
                         <p className="text-[10px] font-bold text-[#78350f] uppercase">Settle</p>
                       </div>
-                      <div className="text-center bg-[#f0f2f5] p-2 rounded-lg col-span-3">
-                        <div className="flex items-center justify-center gap-3">
-                          <div className="flex items-center gap-1">
+                      <div className="text-center bg-[#f0f2f5] p-2 rounded-lg sm:col-span-3">
+                        <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                          <div className="flex items-center gap-1 whitespace-nowrap">
                             <Clock className="w-3.5 h-3.5 text-[#d97706]" />
                             <span className="text-sm font-bold text-[#1a2332]">{r.avgDays}d</span>
                             <span className="text-xs text-[#5f6368]">avg duration</span>
                           </div>
-                          <div className="w-px h-4 bg-[#e0e3e7]" />
-                          <div className="flex items-center gap-1">
+                          <div className="hidden sm:block w-px h-4 bg-[#e0e3e7]" />
+                          <div className="flex items-center gap-1 whitespace-nowrap">
                             <Briefcase className="w-3.5 h-3.5 text-[#1e40af]" />
                             <span className="text-sm font-bold text-[#1a2332]">{r.totalCases}</span>
                             <span className="text-xs text-[#5f6368]">cases</span>

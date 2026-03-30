@@ -45,7 +45,7 @@ export default function ClientDashboard({ onViewDetails }: ClientDashboardProps)
       </div>
 
       {/* Quick Actions */}
-      <div className="grid md:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <button
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
           className="bg-blue-600 text-white p-6 rounded-lg hover:bg-blue-700 transition text-left"
@@ -88,9 +88,9 @@ export default function ClientDashboard({ onViewDetails }: ClientDashboardProps)
                 className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition cursor-pointer"
                 onClick={() => onViewDetails(lawyer.id)}
               >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
                       <h3 className="text-lg font-semibold text-gray-900">{lawyer.name}</h3>
                       <span className="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded">
                         Rank #{lawyer.rank}
@@ -118,7 +118,7 @@ export default function ClientDashboard({ onViewDetails }: ClientDashboardProps)
                 </div>
                 
                 {(lawyer.contactEmail || lawyer.contactPhone) && (
-                  <div className="mt-3 pt-3 border-t border-gray-100 flex gap-4 text-sm">
+                  <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap gap-3 sm:gap-4 text-sm">
                     {lawyer.contactEmail && (
                       <a
                         href={`mailto:${lawyer.contactEmail}`}
@@ -205,7 +205,7 @@ export default function ClientDashboard({ onViewDetails }: ClientDashboardProps)
           {recentSearches.map((search, idx) => (
             <div
               key={idx}
-              className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition cursor-pointer"
+              className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition cursor-pointer"
             >
               <div className="flex items-center gap-3">
                 <Search className="w-4 h-4 text-gray-400" />

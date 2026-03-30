@@ -108,8 +108,8 @@ export default function JudgesList({ onViewDetails }: JudgesListProps) {
               className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-lg transition cursor-pointer"
               onClick={() => onViewDetails(judge.id)}
             >
-              <div className="flex items-start justify-between">
-                <div className="flex gap-4 flex-1">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div className="flex gap-4 flex-1 min-w-0">
                   {/* Rank Badge */}
                   <div className="flex-shrink-0">
                     <div
@@ -130,9 +130,9 @@ export default function JudgesList({ onViewDetails }: JudgesListProps) {
                   </div>
 
                   {/* Judge Info */}
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <h2 className="text-xl font-semibold text-gray-900 mb-1">{judge.name ?? "Unnamed Judge"}</h2>
-                    <div className="flex items-center gap-2 mb-3">
+                    <div className="flex flex-wrap items-center gap-2 mb-3">
                       <Building2 className="w-4 h-4 text-gray-500" />
                       <span className="text-gray-700">{judge.designation ?? "MahaRERA"}</span>
                     </div>
@@ -141,7 +141,7 @@ export default function JudgesList({ onViewDetails }: JudgesListProps) {
                 </div>
 
                 {/* Stats */}
-                <div className="grid grid-cols-2 gap-4 ml-6">
+                <div className="grid grid-cols-2 gap-4 xl:ml-6 shrink-0">
                   <div className="text-center">
                     <div className="flex items-center justify-center gap-1 mb-1">
                       <Scale className="w-4 h-4 text-blue-600" />
@@ -183,7 +183,7 @@ export default function JudgesList({ onViewDetails }: JudgesListProps) {
                     <div className="bg-yellow-500" style={{ width: `${dist.s}%` }} />
                   </div>
                 </div>
-                <div className="flex gap-4 text-xs text-gray-600">
+                <div className="flex flex-wrap gap-3 sm:gap-4 text-xs text-gray-600">
                   <span className="flex items-center gap-1">
                     <span className="w-2 h-2 bg-blue-500 rounded-full" />
                     Complainant: {Number(judge.complainant_favor_rate ?? 0).toFixed(1)}%

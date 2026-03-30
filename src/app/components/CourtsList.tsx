@@ -119,7 +119,7 @@ export default function CourtsList({ onViewDetails }: CourtsListProps) {
         </div>
       )}
 
-      <div className="mb-6 flex items-end justify-between gap-4">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="w-full max-w-sm">
           <label className="block text-sm font-semibold text-[#1a2332] mb-2">Search Courts</label>
           <input
@@ -146,8 +146,8 @@ export default function CourtsList({ onViewDetails }: CourtsListProps) {
               className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-lg transition cursor-pointer"
               onClick={() => onViewDetails(court.id)}
             >
-              <div className="flex items-start justify-between">
-                <div className="flex gap-4 flex-1">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div className="flex gap-4 flex-1 min-w-0">
                   {/* Rank Badge */}
                   <div className="flex-shrink-0">
                     <div
@@ -168,9 +168,9 @@ export default function CourtsList({ onViewDetails }: CourtsListProps) {
                   </div>
 
                   {/* Court Info */}
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <h2 className="text-xl font-semibold text-gray-900 mb-1">{court.name ?? "Unnamed Court"}</h2>
-                    <div className="flex items-center gap-4 mb-3">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-4 mb-3">
                       <span className="flex items-center gap-1 text-gray-600">
                         <Building2 className="w-4 h-4" />
                         {court.location}
@@ -185,7 +185,7 @@ export default function CourtsList({ onViewDetails }: CourtsListProps) {
                 </div>
 
                 {/* Stats */}
-                <div className="grid grid-cols-2 gap-4 ml-6">
+                <div className="grid grid-cols-2 gap-4 xl:ml-6 shrink-0">
                   <div className="text-center">
                     <div className="flex items-center justify-center gap-1 mb-1">
                       <Scale className="w-4 h-4 text-blue-600" />
@@ -227,7 +227,7 @@ export default function CourtsList({ onViewDetails }: CourtsListProps) {
                     <div className="bg-yellow-500" style={{ width: `${Number(court.settlement_rate ?? 0).toFixed(1)}%` }} />
                   </div>
                 </div>
-                <div className="flex gap-4 text-xs text-gray-600">
+                <div className="flex flex-wrap gap-3 sm:gap-4 text-xs text-gray-600">
                   <span className="flex items-center gap-1">
                     <span className="w-2 h-2 bg-blue-500 rounded-full" />
                     Complainant: {complainantRate}%
