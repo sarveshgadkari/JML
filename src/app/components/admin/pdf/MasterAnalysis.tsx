@@ -4,59 +4,139 @@ import getSupabase from "../../../../utils/supabase/client";
 export default function MasterAnalysis() {
   const [rows, setRows] = React.useState<any[]>([]);
   const [q, setQ] = React.useState("");
-  const [stats, setStats] = React.useState<{ total: number; lawyers: number; recent: number }>({ total: 0, lawyers: 0, recent: 0 });
+  const [stats, setStats] = React.useState<{ pending: number }>({ pending: 0 });
+  const [running, setRunning] = React.useState(false);
+  const [progress, setProgress] = React.useState<{ done: number; total: number }>({ done: 0, total: 0 });
+  const isRunningRef = React.useRef(false);
 
   const load = async () => {
     const supabase = getSupabase();
-    const [{ data, error }, totalC, recentC] = await Promise.all([
-      supabase
-        .from("cases")
-        .select("case_number,case_title,court_name,judge_1,filing_date,judgment_date,judgement_link,updated_at")
-        .ilike("case_title", `%${q}%`)
-        .order("updated_at", { ascending: false })
-        .limit(300),
-      supabase.from("cases").select("id", { count: "exact", head: true }),
-      supabase.from("cases").select("id", { count: "exact", head: true }).gte("updated_at", new Date(Date.now() - 24*60*60*1000).toISOString()),
-    ]);
-    if (!error && data) setRows(data);
-    const total = totalC.count || 0;
-    const recent = recentC.count || 0;
 
-    const lawyersCountRes = await supabase
-      .from("cases")
-      .select("petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5")
+    const { data: queueRows, error: queueErr } = await supabase
+      .from("table_analysis_queue")
+      .select("id,case_number,inserted_at")
+      .order("inserted_at", { ascending: true })
       .limit(5000);
-    const setLawyers = new Set<string>();
-    (lawyersCountRes.data || []).forEach((r: any) => {
-      [r.petitioner_lawyer_1,r.petitioner_lawyer_2,r.petitioner_lawyer_3,r.petitioner_lawyer_4,r.petitioner_lawyer_5,
-       r.respondent_lawyer_1,r.respondent_lawyer_2,r.respondent_lawyer_3,r.respondent_lawyer_4,r.respondent_lawyer_5
-      ].filter(Boolean).forEach((n: string) => setLawyers.add(n));
-    });
-    setStats({ total, lawyers: setLawyers.size, recent });
+
+    if (queueErr) throw queueErr;
+
+    const queue = queueRows || [];
+    const caseNumbers = queue.map((r: any) => r.case_number).filter(Boolean);
+
+    setStats({ pending: queue.length });
+
+    if (caseNumbers.length === 0) {
+      setRows([]);
+      return;
+    }
+
+    let casesQ = supabase
+      .from("cases")
+      .select("case_number,case_title,court_name,judge_1,filing_date,judgment_date,judgement_link,updated_at")
+      .in("case_number", caseNumbers);
+
+    if (q.trim()) {
+      casesQ = casesQ.ilike("case_title", `%${q.trim()}%`);
+    }
+
+    const { data: caseRows, error: caseErr } = await casesQ;
+    if (caseErr) throw caseErr;
+
+    const byCaseNumber = new Map((caseRows || []).map((r: any) => [r.case_number, r]));
+    // Preserve the queue's insertion order.
+    const merged = queue.map((qr: any) => ({
+      id: qr.id,
+      inserted_at: qr.inserted_at,
+      ...(byCaseNumber.get(qr.case_number) || {}),
+    }));
+    setRows(merged);
   };
 
-  React.useEffect(() => { void load(); }, [q]);
+  React.useEffect(() => {
+    let mounted = true;
+    const tick = async () => {
+      if (!mounted) return;
+      await load();
+    };
 
-  const downloadCsv = () => {
-    const headers = ["case_number","case_title","court_name","judge_1","filing_date","judgment_date","judgement_link","updated_at"];
-    const csv = [headers.join(",")].concat(
-      rows.map((r: any) => headers.map((h) => `"${String(r[h] ?? "").replace(/"/g, '""')}"`).join(","))
-    ).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "master_cases.csv";
-    a.click();
-    URL.revokeObjectURL(url);
+    void tick();
+    const id = window.setInterval(() => {
+      void tick();
+    }, 5000);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(id);
+    };
+  }, [q]);
+
+  const runTableAnalysisForPendingQueue = async () => {
+    if (running) return;
+    setRunning(true);
+    isRunningRef.current = true;
+    setProgress({ done: 0, total: 0 });
+    try {
+      const supabase = getSupabase();
+
+      const CHUNK_SIZE = 1;
+
+      let doneSoFar = 0;
+      let totalSoFar = 0;
+
+      // Keep draining until queue is empty or the tab is closed (loop stops).
+      while (isRunningRef.current) {
+        // Always pull the oldest N so we don't wait for a big snapshot.
+        const { data: pendingRows, error: listErr } = await supabase
+          .from("table_analysis_queue")
+          .select("id,case_number")
+          .order("inserted_at", { ascending: true })
+          .limit(CHUNK_SIZE);
+        if (listErr) throw listErr;
+
+        const batchRows = pendingRows || [];
+        if (batchRows.length === 0) break;
+
+        const batchIds = batchRows.map((r: any) => r.id);
+        const batchCaseNumbers = batchRows.map((r: any) => r.case_number).filter(Boolean);
+        if (batchCaseNumbers.length === 0) break;
+
+        totalSoFar += batchCaseNumbers.length;
+        setProgress({ done: doneSoFar, total: totalSoFar });
+
+        const { data: rpcData, error } = await supabase.rpc("admin_run_table_analysis_wide_light", {
+          p_case_numbers: batchCaseNumbers,
+        });
+        if (error) {
+          throw new Error(`RPC admin_run_table_analysis_wide_light failed: ${error.message || error}`);
+        }
+
+        const processed = rpcData?.analytics_4tables?.processed ?? batchCaseNumbers.length;
+        doneSoFar += processed;
+        setProgress({ done: doneSoFar, total: totalSoFar });
+
+        // Remove each analyzed batch immediately.
+        const { error: delErr } = await supabase.from("table_analysis_queue").delete().in("id", batchIds);
+        if (delErr) throw delErr;
+      }
+
+      alert(`Table analysis completed. Processed ${doneSoFar} case(s).`);
+      await load();
+    } catch (e: any) {
+      // Try to include more debug information if available.
+      const message = e?.message || String(e);
+      alert(`Table analysis failed: ${message}`);
+    } finally {
+      setRunning(false);
+      isRunningRef.current = false;
+    }
   };
 
   return (
     <div className="space-y-4">
       <div className="grid md:grid-cols-3 gap-3">
-        <Stat label="Total Live Cases" value={stats.total} tone="ok" />
-        <Stat label="Unique Lawyers Indexed" value={stats.lawyers} tone="processing" />
-        <Stat label="Recent Uploads (Last 24h)" value={stats.recent} tone="pending" />
+        <Stat label="Pending In Queue" value={stats.pending} tone={stats.pending > 0 ? "pending" : "ok"} />
+        <Stat label="Queue Clears After Run" value={1} tone="processing" />
+        <Stat label="Workers Only Enqueue" value={1} tone="processing" />
       </div>
 
       <div className="rounded-xl border bg-white p-4 flex items-center justify-between gap-3 flex-wrap">
@@ -68,24 +148,17 @@ export default function MasterAnalysis() {
         />
         <div className="flex items-center gap-2">
           <button
-            onClick={async () => {
-              try {
-                const supabase = getSupabase();
-                // Prefer wide canonical batch if available; fall back if needed
-                const { error } = await supabase.rpc("admin_recalculate_analytics_wide_canon", { p_batch_size: 50, p_offset: 0 });
-                if (error) throw error;
-                alert("Master analysis started. Check analytics tables shortly.");
-              } catch (e: any) {
-                alert(`Master analysis failed: ${e?.message || e}`);
-              }
-            }}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-white text-sm font-semibold hover:bg-indigo-700"
+            onClick={runTableAnalysisForPendingQueue}
+            disabled={running}
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-60"
           >
-            Run Master Analysis
+            {running ? "Running..." : "Run Table Analysis (Manual)"}
           </button>
-          <button onClick={downloadCsv} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-white text-sm font-semibold">
-            Download Master CSV
-          </button>
+          {running && (
+            <span className="text-xs text-slate-600 whitespace-nowrap">
+              {progress.total > 0 ? `${progress.done}/${progress.total} processed` : "Processing..."}
+            </span>
+          )}
         </div>
       </div>
 

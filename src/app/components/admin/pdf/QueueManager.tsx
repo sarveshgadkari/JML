@@ -9,9 +9,16 @@ type QueueRow = {
   id: string;
   filename: string;
   uploadedAt: string;
-  status: "Pending" | "Processing" | "Completed" | "Failed";
+  status: "Pending" | "Processing" | "Completed";
   claimedBy?: string | null;
 };
+
+const normalizeQueueStatus = (value: string): QueueRow["status"] =>
+  value === "PROCESSING"
+    ? "Processing"
+    : value === "COMPLETED" || value === "ARCHIVED"
+      ? "Completed"
+      : "Pending";
 
 interface Props {
   queue: QueueRow[];
@@ -63,15 +70,22 @@ export default function QueueManager({ queue, onUpdateQueue }: Props) {
       const supabase = getSupabase();
       const { data, error } = await supabase
         .from("pdf_queue")
-        .select("id,file_url,status,claimed_by,claimed_at,created_at")
+        .select("*")
         .order("created_at", { ascending: false })
         .limit(500);
       if (error) throw error;
       const rows: QueueRow[] = (data ?? []).map((r: any) => ({
         id: r.id,
-        filename: String(r.file_url || "").split("/").pop() || r.file_url || "unknown.pdf",
+        filename:
+          String(r.file_url || "").split("/").pop() ||
+          String(r.direct_download_url || "").split("/").pop() ||
+          String(r.public_viewer_url || "").split("/").pop() ||
+          r.file_url ||
+          r.direct_download_url ||
+          r.public_viewer_url ||
+          "unknown.pdf",
         uploadedAt: r.created_at,
-        status: r.status as QueueRow["status"],
+        status: normalizeQueueStatus(r.status),
         claimedBy: r.claimed_by || null
       }));
       onUpdateQueue(rows);
@@ -82,6 +96,7 @@ export default function QueueManager({ queue, onUpdateQueue }: Props) {
 
   // Realtime: blink-in changes without reload
   React.useEffect(() => {
+    void refreshQueue();
     const supabase = getSupabase();
     const ch = supabase
       .channel("pdf_queue_changes")
@@ -212,7 +227,7 @@ export default function QueueManager({ queue, onUpdateQueue }: Props) {
           if (upErr) {
             await supabase.from("pdf_queue").insert({
               file_url: `${bucket}:${path}`,
-              status: "FAILED",
+              status: "PENDING",
               error_log: `storage upload failed: ${upErr.message}`
             });
             return;
@@ -224,7 +239,7 @@ export default function QueueManager({ queue, onUpdateQueue }: Props) {
           if (insErr) {
             await supabase.from("pdf_queue").insert({
               file_url: `${bucket}:${path}`,
-              status: "FAILED",
+              status: "PENDING",
               error_log: `queue insert failed: ${insErr.message}`
             });
           }
@@ -528,8 +543,6 @@ export default function QueueManager({ queue, onUpdateQueue }: Props) {
                 const color =
                   row.status === "Completed"
                     ? "text-emerald-700 bg-emerald-50 border-emerald-200"
-                    : row.status === "Failed"
-                    ? "text-rose-700 bg-rose-50 border-rose-200"
                     : row.status === "Processing"
                     ? "text-blue-700 bg-blue-50 border-blue-200"
                     : "text-slate-700 bg-slate-50 border-slate-200";

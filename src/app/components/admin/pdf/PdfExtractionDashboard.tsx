@@ -5,7 +5,6 @@ import QueueManager from "./QueueManager";
 import ThreadConfigurator, { ProcessingThread } from "./ThreadConfigurator";
 import ProcessingDashboard, { QueueStats } from "./ProcessingDashboard";
 import ProcessingEngine from "./ProcessingEngine";
-import ResultReview from "./ResultReview";
 import MasterAnalysis from "./MasterAnalysis";
 import RankCommandCenter from "./RankCommandCenter";
 
@@ -54,7 +53,7 @@ export default function PdfExtractionDashboard() {
       </p>
 
       <Tabs defaultValue="queue" className="w-full">
-        <TabsList className="grid grid-cols-6 w-full md:w-full bg-white border rounded-lg">
+        <TabsList className="grid grid-cols-5 w-full md:w-full bg-white border rounded-lg">
           <TabsTrigger value="queue" className="data-[state=active]:bg-slate-100">
             <Server className="w-4 h-4 mr-2" /> Upload & Queue
           </TabsTrigger>
@@ -64,11 +63,8 @@ export default function PdfExtractionDashboard() {
           <TabsTrigger value="processing" className="data-[state=active]:bg-slate-100">
             <Database className="w-4 h-4 mr-2" /> Processing Status
           </TabsTrigger>
-          <TabsTrigger value="results" className="data-[state=active]:bg-slate-100">
-            <Database className="w-4 h-4 mr-2" /> Results Review
-          </TabsTrigger>
           <TabsTrigger value="analysis" className="data-[state=active]:bg-slate-100">
-            <Database className="w-4 h-4 mr-2" /> Master Analysis
+            <Database className="w-4 h-4 mr-2" /> Table Analysis
           </TabsTrigger>
           <TabsTrigger value="ranks" className="data-[state=active]:bg-slate-100">
             <Database className="w-4 h-4 mr-2" /> Compute Ranks
@@ -84,26 +80,8 @@ export default function PdfExtractionDashboard() {
         </TabsContent>
 
         <TabsContent value="processing" className="mt-6 space-y-6">
-          {/* Orchestrator shown first for better visibility */}
-          <ProcessingEngine
-            activeThread={
-              threads.find((t) => t.active) ? {
-                id: threads.find((t) => t.active)!.id,
-                name: threads.find((t) => t.active)!.name,
-                provider: threads.find((t) => t.active)!.provider,
-                model: threads.find((t) => t.active)!.model,
-                apiKey: threads.find((t) => t.active)!.apiKey,
-                batchSize: threads.find((t) => t.active)!.batchSize,
-                prompt: threads.find((t) => t.active)!.prompt,
-                rpmLimit:  threads.find((t) => t.active) ?  FREE_RPM_GUESS(threads.find((t) => t.active)!.provider, threads.find((t) => t.active)!.model) : 5
-              } : null
-            }
-          />
-          <ProcessingDashboard stats={stats} threads={threads} queue={queue} />
-        </TabsContent>
-
-        <TabsContent value="results" className="mt-6">
-          <ResultReview />
+          <ProcessingEngine threads={threads} />
+          <ProcessingDashboard stats={stats} threads={threads} queue={queue} onSyncQueue={setQueue} />
         </TabsContent>
 
         <TabsContent value="analysis" className="mt-6">
@@ -136,15 +114,5 @@ export default function PdfExtractionDashboard() {
       */}
     </div>
   );
-}
-
-// Heuristic: provide a safe default RPM per provider/model; admins can tune in UI later
-function FREE_RPM_GUESS(provider: string, _model: string) {
-  const p = provider.toLowerCase();
-  // Keep conservative defaults; users can tune upwards
-  if (p.includes("google")) return 5;
-  if (p.includes("groq")) return 5;
-  if (p.includes("openrouter")) return 5;
-  return 5;
 }
 

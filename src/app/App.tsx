@@ -15,6 +15,7 @@ import FindLawyerWizard from "./components/FindLawyerWizard";
 import LawyerDashboard from "./components/LawyerDashboard";
 import ClientDashboard from "./components/ClientDashboard";
 import AdminDashboard from "./components/AdminDashboard";
+import PopupWorkerShell from "./components/admin/pdf/PopupWorkerShell";
 import { getCurrentSession, checkCurrentUserAdmin } from "../utils/auth";
 
 export type UserRole = "client" | "lawyer" | null;
@@ -123,6 +124,23 @@ export default function App() {
   );
   const [detailBackView, setDetailBackView] = useState<string>("lawyers");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const popupMode = new URLSearchParams(window.location.search).get("mode") === "popup-worker";
+  const popupThreadId = new URLSearchParams(window.location.search).get("threadId");
+
+  useEffect(() => {
+    void (async () => {
+      const session = await getCurrentSession();
+      if (!session?.user) return;
+      setUserId(session.user.id);
+      try {
+        const admin = await checkCurrentUserAdmin();
+        setUserRole("lawyer");
+        setIsAdmin(admin);
+      } catch {
+        setUserRole("lawyer");
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     const applyRouteFromUrl = () => {
@@ -256,6 +274,16 @@ export default function App() {
     setCurrentView("court-details");
     pushUrl("court-details", id);
   };
+
+  if (popupMode) {
+    return popupThreadId ? <PopupWorkerShell threadId={popupThreadId} /> : (
+      <div className="min-h-screen bg-slate-100 p-6">
+        <div className="mx-auto max-w-2xl rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+          Missing popup worker thread id.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">

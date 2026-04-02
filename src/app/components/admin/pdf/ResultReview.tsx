@@ -1,5 +1,6 @@
 import React from "react";
 import getSupabase from "../../../../utils/supabase/client";
+import { buildImportPayloadFromExtractionRows } from "./import-utils";
 
 type ReviewRow = {
   id: string;
@@ -12,6 +13,7 @@ type ReviewRow = {
 export default function ResultReview() {
   const [rows, setRows] = React.useState<ReviewRow[]>([]);
   const [busy, setBusy] = React.useState(false);
+  const allSelected = rows.length > 0 && rows.every((r) => !!r.verified);
 
   const load = async () => {
     const supabase = getSupabase();
@@ -58,6 +60,10 @@ export default function ResultReview() {
     setRows((prev) => prev.map((r) => (r.id === rowId ? { ...r, verified: val } : r)));
   };
 
+  const toggleAllVerified = (val: boolean) => {
+    setRows((prev) => prev.map((r) => ({ ...r, verified: val })));
+  };
+
   const uploadVerifiedToMaster = async () => {
     setBusy(true);
     try {
@@ -66,33 +72,7 @@ export default function ResultReview() {
       const payload: any[] = [];
       rows.filter((r) => r.verified).forEach((r) => {
         (r.extracted_data || []).forEach((obj: any) => {
-          const stripTicks = (s: any) => (typeof s === "string" ? s.replace(/^`+|`+$/g, "") : s);
-          const toArr = (v: any) => {
-            if (Array.isArray(v)) return v.map(stripTicks);
-            if (typeof v === "string") {
-              try {
-                const p = JSON.parse(v);
-                return Array.isArray(p) ? p.map(stripTicks) : [];
-              } catch { return []; }
-            }
-            return [];
-          };
-          payload.push({
-            complaint_number: stripTicks(obj.complaint_number),
-            case_title: stripTicks(obj.case_title),
-            judge: stripTicks(obj.judge),
-            court: stripTicks(obj.court),
-            court_type: stripTicks(obj.court_type),
-            outcome: stripTicks(obj.outcome),
-            status: stripTicks(obj.status),
-            filing_date: stripTicks(obj.filing_date),
-            judgement_date: stripTicks(obj.judgement_date),
-            petitioner_lawyers: toArr(obj.petitioner_lawyers),
-            respondent_lawyers: toArr(obj.respondent_lawyers),
-            total_hearings: obj.total_hearings ?? null,
-            judgement_link: stripTicks(obj.judgement_link),
-            data_source: "pdf_ai",
-          });
+          payload.push(...buildImportPayloadFromExtractionRows([obj]));
         });
       });
       if (payload.length === 0) return;
@@ -116,6 +96,7 @@ export default function ResultReview() {
       }
 
       alert(`Uploaded ${payload.length} records to master and archived source rows.`);
+      setRows((prev) => prev.filter((r) => !r.verified));
       void load();
     } catch (e: any) {
       alert(`Upload failed: ${e?.message || e}`);
@@ -135,13 +116,22 @@ export default function ResultReview() {
     <div className="space-y-4">
       <div className="rounded-xl border bg-white p-4 flex items-center justify-between">
         <div className="font-semibold text-slate-900">Result Review & Upload</div>
-        <button
-          onClick={uploadVerifiedToMaster}
-          disabled={busy}
-          className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-white text-sm font-semibold disabled:opacity-50"
-        >
-          🚀 UPLOAD VERIFIED TO MASTER
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => toggleAllVerified(!allSelected)}
+            disabled={rows.length === 0}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-slate-900 text-sm font-semibold disabled:opacity-50"
+          >
+            {allSelected ? "Uncheck All" : "Check All"}
+          </button>
+          <button
+            onClick={uploadVerifiedToMaster}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-white text-sm font-semibold disabled:opacity-50"
+          >
+            🚀 UPLOAD VERIFIED TO MASTER
+          </button>
+        </div>
       </div>
 
       <div className="rounded-xl border bg-white overflow-auto">

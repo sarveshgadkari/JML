@@ -82,6 +82,17 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
     avgHearings: 6,
   });
 
+  const normalizePersonName = (value: string | null | undefined) =>
+    String(value ?? "")
+      .toLowerCase()
+      .replace(/[\u2018\u2019\u201C\u201D]/g, "'")
+      .replace(/\([^)]*\)/g, " ")
+      .replace(/\b(for\s+complainant|for\s+respondent|present\s+for\s+complainant|present\s+for\s+respondent)\b/g, " ")
+      .replace(/\b(adv\.?|advocate|ld\.?|mr\.?|mrs\.?|ms\.?|shri|smt|dr\.?|prof\.?|c\.?a\.?)\b/g, " ")
+      .replace(/[.,/\\|:;~`"!@#$%^&*_+=\-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
   React.useEffect(() => {
     (async () => {
       const supabase = getSupabase();
@@ -95,27 +106,29 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
       const { data: jaRaw } = await supabase.from("judge_analytics").select("*").eq("judge_id", judgeId).maybeSingle();
       const ja = (jaRaw as JudgeAnalyticsRow) ?? null;
 
-      // Load cases for analytics from master table
-      // Variant-safe approach: fetch by equality across judge_1..9 for the resolved name
-      const orFilter = [
-        `judge_1.eq.${judgeName}`, `judge_2.eq.${judgeName}`, `judge_3.eq.${judgeName}`,
-        `judge_4.eq.${judgeName}`, `judge_5.eq.${judgeName}`, `judge_6.eq.${judgeName}`,
-        `judge_7.eq.${judgeName}`, `judge_8.eq.${judgeName}`, `judge_9.eq.${judgeName}`
-      ].join(",");
-      const { data: cs } = await supabase
+      // Load cases for analytics from master table using canonical name matching across judge_1..9.
+      const canonicalJudgeName = normalizePersonName(judgeName);
+      const { data: allCases } = await supabase
         .from("cases")
         .select([
           "case_number",
           "case_title",
+          "case_type",
+          "court_name",
           "judge_1","judge_2","judge_3","judge_4","judge_5","judge_6","judge_7","judge_8","judge_9",
           "filing_date","judgment_date","status","outcome",
           "petitioner_lawyer_1","petitioner_lawyer_2","petitioner_lawyer_3","petitioner_lawyer_4","petitioner_lawyer_5",
           "respondent_lawyer_1","respondent_lawyer_2","respondent_lawyer_3","respondent_lawyer_4","respondent_lawyer_5",
           "total_hearings"
         ].join(","))
-        .or(orFilter)
-        .limit(5000);
-      const rows: CaseRow[] = (cs as CaseRow[]) ?? [];
+        .limit(40000);
+      const rows: CaseRow[] = ((allCases as CaseRow[] | null) ?? []).filter((row) => {
+        const judges = [
+          row.judge_1, row.judge_2, row.judge_3, row.judge_4, row.judge_5,
+          row.judge_6, row.judge_7, row.judge_8, row.judge_9,
+        ];
+        return judges.some((name) => normalizePersonName(name) === canonicalJudgeName);
+      });
       setCaseBase(rows);
 
       // Hero metrics from judge_analytics where available; otherwise fallback compute from cases (outcome-only base)
@@ -232,7 +245,7 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
         .order("total_cases", { ascending: false })
         .limit(10);
       const ljaRows: LjaRow[] = (ljaRaw as LjaRow[] | null) ?? [];
-      const ljaRowsFiltered = ljaRows.filter(r => (r.lawyer_name ?? "").toLowerCase() !== "none" && (r.lawyer_name ?? "").trim() !== "");
+      const ljaRowsFiltered = ljaRows.filter(r => (r.lawyer_name ?? "").trim() !== "");
       setTopOpponentsData(
         ljaRowsFiltered.slice(0, 8).map(r => ({
           name: String(r.lawyer_name ?? ""),
@@ -305,12 +318,12 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
         respMap.set(k, cur);
       };
       rows.forEach(r => {
+        const res = outcomeOf(r.outcome);
         const title = r.case_title ?? "";
         const m = title.split(/vs\.?|v\/s\.?|versus/i);
         if (m.length >= 2) {
           const rhs = norm(m[1]);
           const entities = splitRespondents(rhs);
-          const res = outcomeOf(r.outcome);
           entities.forEach(ent => inc(ent, res as any));
         }
       });

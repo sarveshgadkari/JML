@@ -8,13 +8,14 @@ export type QueueStats = {
   pending: number;
   processing: number;
   extracted: number;
+  reclaimed?: number;
 };
 
 type QueueRow = {
   id: string;
   filename: string;
   uploadedAt: string;
-  status: "Pending" | "Processing" | "Completed" | "Failed";
+  status: "Pending" | "Processing" | "Completed";
   claimedBy?: string | null;
 };
 
@@ -22,37 +23,101 @@ interface Props {
   stats: QueueStats;
   threads: ProcessingThread[];
   queue: QueueRow[];
+  onSyncQueue: (rows: QueueRow[]) => void;
 }
 
-export default function ProcessingDashboard({ stats, threads, queue }: Props) {
-  const [rows, setRows] = React.useState<Array<{ id: string; file_url: string | null; status: string; created_at: string }>>([]);
+export default function ProcessingDashboard({ stats, threads, queue, onSyncQueue }: Props) {
+  const [rows, setRows] = React.useState<Array<{ id: string; file_url: string | null; public_viewer_url?: string | null; direct_download_url?: string | null; status: string; created_at: string; error_log?: string | null; reclaimed_count?: number | null }>>([]);
   const [busyDelAll, setBusyDelAll] = React.useState(false);
+  const [busyFetchAll, setBusyFetchAll] = React.useState(false);
+  const [workerRuntime, setWorkerRuntime] = React.useState<Record<string, {
+    worker_state?: string | null;
+    worker_last_seen_at?: string | null;
+    worker_claimed_count?: number | null;
+    worker_processed_count?: number | null;
+    worker_current_batch_count?: number | null;
+    worker_popup_id?: string | null;
+    worker_error?: string | null;
+  }>>({});
 
-  const loadRows = async () => {
+  const loadRows = React.useCallback(async () => {
     try {
       const supabase = getSupabase();
       const { data, error } = await supabase
         .from("pdf_queue")
-        .select("id,file_url,status,created_at")
+        .select("*")
         .order("created_at", { ascending: false })
         .limit(500);
-      if (!error && data) setRows(data as any);
+      if (!error && data) {
+        setRows(data as any);
+        const syncedRows: QueueRow[] = (data ?? []).map((r: any) => ({
+          id: r.id,
+          filename:
+            String(r.file_url || "").split("/").pop() ||
+            String(r.direct_download_url || "").split("/").pop() ||
+            String(r.public_viewer_url || "").split("/").pop() ||
+            r.file_url ||
+            r.direct_download_url ||
+            r.public_viewer_url ||
+            "unknown.pdf",
+          uploadedAt: r.created_at,
+          status:
+            r.status === "PROCESSING"
+              ? "Processing"
+              : r.status === "COMPLETED" || r.status === "ARCHIVED"
+              ? "Completed"
+              : "Pending",
+          claimedBy: r.claimed_by || null,
+        }));
+        onSyncQueue(syncedRows);
+      }
     } catch {
       // ignore
     }
-  };
+  }, [onSyncQueue]);
 
   React.useEffect(() => {
     void loadRows();
     const supabase = getSupabase();
+
+    // Realtime can occasionally miss events (network/tab focus). Polling keeps UI consistent.
+    const intervalId = window.setInterval(() => {
+      void loadRows();
+    }, 5000);
+
     const ch = supabase
       .channel("pdf_queue_stream_proc")
       .on("postgres_changes", { event: "*", schema: "public", table: "pdf_queue" }, () => {
         void loadRows();
       })
       .subscribe();
+
     return () => {
       void supabase.removeChannel(ch);
+      window.clearInterval(intervalId);
+    };
+  }, [loadRows]);
+
+  React.useEffect(() => {
+    const loadWorkerRuntime = async () => {
+      const supabase = getSupabase();
+      const { data, error } = await supabase
+        .from("ai_threads")
+        .select("id,worker_state,worker_last_seen_at,worker_claimed_count,worker_processed_count,worker_current_batch_count,worker_popup_id,worker_error");
+      if (!error && data) {
+        setWorkerRuntime(Object.fromEntries((data as any[]).map((row) => [row.id, row])));
+      }
+    };
+    void loadWorkerRuntime();
+    const supabase = getSupabase();
+    const channel = supabase
+      .channel("ai_thread_runtime_stream")
+      .on("postgres_changes", { event: "*", schema: "public", table: "ai_threads" }, () => {
+        void loadWorkerRuntime();
+      })
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -79,17 +144,13 @@ export default function ProcessingDashboard({ stats, threads, queue }: Props) {
     }
   };
 
-  // Mock per-thread runtime status derived from queue
   const perThread = threads
     .filter(t => t.active)
     .map((t) => {
-      const claimed = queue.filter(q => q.claimedBy === t.name && q.status === "Processing");
-      const status = claimed.length === 0 ? "Idle" : "Claiming Batch...";
-      // In a real implementation, you'd track finer-grained phase: Awaiting API, Writing JSON, etc.
-      const firstIdx = claimed[0] ? Number.parseInt((claimed[0].filename.match(/\d+/)?.[0] ?? "0"), 10) : null;
-      const batchLabel = claimed.length > 0
-        ? `Processing ${claimed.length} PDF${claimed.length > 1 ? "s" : ""}`
-        : "—";
+      const runtime = workerRuntime[t.id] || {};
+      const liveBatch = Number(runtime.worker_current_batch_count || 0);
+      const status = runtime.worker_state || (liveBatch > 0 ? "running" : "idle");
+      const batchLabel = liveBatch > 0 ? `Processing ${liveBatch} PDF${liveBatch > 1 ? "s" : ""}` : "—";
       return {
         id: t.id,
         name: t.name,
@@ -97,17 +158,40 @@ export default function ProcessingDashboard({ stats, threads, queue }: Props) {
         model: t.model,
         status,
         batchLabel,
+        claimedCount: Number(runtime.worker_claimed_count || 0),
+        processedCount: Number(runtime.worker_processed_count || 0),
+        popupOpen: !!runtime.worker_popup_id,
+        lastSeenAt: runtime.worker_last_seen_at || null,
+        workerError: runtime.worker_error || null,
       };
     });
+
+  const reclaimedCount = React.useMemo(
+    () => rows.filter((row) => Number(row.reclaimed_count || 0) > 0).length,
+    [rows]
+  );
+
+  const processingBacklogCount = React.useMemo(() => {
+    const pending = rows.filter((r) => r.status === "PENDING").length;
+    const processing = rows.filter((r) => r.status === "PROCESSING").length;
+    return pending + processing;
+  }, [rows]);
+
+  const visibleUploadedRows = React.useMemo(
+    () => rows.filter((r) => r.status !== "COMPLETED" && r.status !== "ARCHIVED"),
+    [rows]
+  );
 
   return (
     <div className="space-y-6">
       <div className="rounded-xl border bg-white p-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
           <StatCard label="Total PDFs" value={stats.total} />
           <StatCard label="Pending" value={stats.pending} tone="pending" />
           <StatCard label="Processing" value={stats.processing} tone="processing" />
           <StatCard label="Extracted" value={stats.extracted} tone="ok" />
+          <StatCard label="Stale/Reclaimed" value={reclaimedCount} tone="pending" />
+          <StatCard label="For Processing" value={processingBacklogCount} tone="processing" />
         </div>
       </div>
 
@@ -129,6 +213,20 @@ export default function ProcessingDashboard({ stats, threads, queue }: Props) {
               <div className="text-sm text-slate-700">
                 <span className="font-medium">Current Batch:</span> {w.batchLabel}
               </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
+                <div className="rounded border bg-slate-50 px-2 py-1">
+                  <div className="text-slate-500">Claimed</div>
+                  <div className="font-semibold text-slate-900">{w.claimedCount}</div>
+                </div>
+                <div className="rounded border bg-slate-50 px-2 py-1">
+                  <div className="text-slate-500">Processed</div>
+                  <div className="font-semibold text-slate-900">{w.processedCount}</div>
+                </div>
+              </div>
+              <div className="mt-2 text-xs text-slate-500">
+                Popup {w.popupOpen ? "connected" : "not connected"}{w.lastSeenAt ? ` • Last seen ${new Date(w.lastSeenAt).toLocaleTimeString()}` : ""}
+              </div>
+              {w.workerError && <div className="mt-2 text-xs text-rose-700">{w.workerError}</div>}
             </div>
           ))}
         </div>
@@ -137,14 +235,35 @@ export default function ProcessingDashboard({ stats, threads, queue }: Props) {
       {/* Uploaded PDFs table */}
       <div className="rounded-xl border bg-white overflow-hidden">
         <div className="px-4 py-3 border-b bg-slate-50 text-slate-900 font-semibold flex items-center justify-between">
-          <div>Uploaded PDFs</div>
-          <button
-            onClick={deleteAll}
-            disabled={busyDelAll || rows.length === 0}
-            className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-3 py-1.5 text-white text-sm font-semibold disabled:opacity-50"
-          >
-            <Trash2 className="w-4 h-4" /> Delete All
-          </button>
+          <div className="flex items-center gap-2">
+            <div>Uploaded PDFs</div>
+            <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-700">
+              {visibleUploadedRows.length}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                setBusyFetchAll(true);
+                try {
+                  await loadRows();
+                } finally {
+                  setBusyFetchAll(false);
+                }
+              }}
+              disabled={busyFetchAll}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-slate-900 text-sm font-semibold disabled:opacity-50"
+            >
+              {busyFetchAll ? "Fetching..." : "Fetch All"}
+            </button>
+            <button
+              onClick={deleteAll}
+              disabled={busyDelAll || rows.length === 0}
+              className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-3 py-1.5 text-white text-sm font-semibold disabled:opacity-50"
+            >
+              <Trash2 className="w-4 h-4" /> Delete All
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
@@ -157,19 +276,24 @@ export default function ProcessingDashboard({ stats, threads, queue }: Props) {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && (
+              {visibleUploadedRows.length === 0 && (
                 <tr><td className="px-4 py-6 text-slate-500" colSpan={4}>No PDFs found.</td></tr>
               )}
-              {rows.map(r => {
+              {visibleUploadedRows.map(r => {
                 const color =
-                  r.status === "COMPLETED"
+                  r.status === "COMPLETED" || r.status === "ARCHIVED"
                     ? "text-emerald-700 bg-emerald-50 border-emerald-200"
-                    : r.status === "FAILED"
-                    ? "text-rose-700 bg-rose-50 border-rose-200"
                     : r.status === "PROCESSING"
                     ? "text-blue-700 bg-blue-50 border-blue-200"
                     : "text-slate-700 bg-slate-50 border-slate-200";
-                const fname = String(r.file_url || "").split("/").pop() || r.file_url || "unknown";
+                const fname =
+                  String(r.file_url || "").split("/").pop() ||
+                  String(r.direct_download_url || "").split("/").pop() ||
+                  String(r.public_viewer_url || "").split("/").pop() ||
+                  r.file_url ||
+                  r.direct_download_url ||
+                  r.public_viewer_url ||
+                  "unknown";
                 return (
                   <tr key={r.id} className="border-t">
                     <td className="px-4 py-2">{fname}</td>

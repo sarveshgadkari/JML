@@ -30,7 +30,7 @@ BEGIN
     SELECT
       c.case_number,
       lower(coalesce(c.outcome,'')) AS outc,
-      c.filing_date,
+      COALESCE(c.filing_date, c.first_hearing_date) AS filing_date,
       c.judgment_date,
       unnest(ARRAY[
         c.petitioner_lawyer_1, c.petitioner_lawyer_2, c.petitioner_lawyer_3,

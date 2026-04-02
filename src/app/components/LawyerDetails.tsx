@@ -90,6 +90,22 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
     return !e ? false : e.startsWith("import+") || e.endsWith("@judge-my-lawyer.local") || e.includes("@judge-my-lawyer.local");
   };
 
+  const normalizePersonName = (value: string | null | undefined) =>
+    String(value ?? "")
+      .toLowerCase()
+      .replace(/[\u2018\u2019\u201C\u201D]/g, "'")
+      .replace(/\([^)]*\)/g, " ")
+      .replace(/\b(for\s+complainant|for\s+respondent|present\s+for\s+complainant|present\s+for\s+respondent)\b/g, " ")
+      .replace(/\b(adv\.?|advocate|ld\.?|mr\.?|mrs\.?|ms\.?|shri|smt|dr\.?|prof\.?|c\.?a\.?)\b/g, " ")
+      .replace(/[.,/\\|:;~`"!@#$%^&*_+=\-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const buildSelfRepresentedLawyerName = (
+    courtName: string | null | undefined,
+    side: "Complainant" | "Respondent"
+  ) => `${String(courtName ?? "").trim() || "Unknown Court"} ${side} without a lawyer`;
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -144,30 +160,42 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
           };
 
           const selectCols =
-            "case_number,outcome,status," +
-            "petitioner_name,respondent_name,total_hearings,judgment_date," +
+            "case_number,case_type,court_name,filing_date,judgment_date,outcome,status," +
+            "petitioner_name,respondent_name,total_hearings," +
             "petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5," +
             "respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5," +
             "judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9";
-
-          const orFilter = [
-            `petitioner_lawyer_1.eq.${lawyerName}`,
-            `petitioner_lawyer_2.eq.${lawyerName}`,
-            `petitioner_lawyer_3.eq.${lawyerName}`,
-            `petitioner_lawyer_4.eq.${lawyerName}`,
-            `petitioner_lawyer_5.eq.${lawyerName}`,
-            `respondent_lawyer_1.eq.${lawyerName}`,
-            `respondent_lawyer_2.eq.${lawyerName}`,
-            `respondent_lawyer_3.eq.${lawyerName}`,
-            `respondent_lawyer_4.eq.${lawyerName}`,
-            `respondent_lawyer_5.eq.${lawyerName}`,
-          ].join(",");
-
-          const { data: caseRows } = await supabase
+          const canonicalLawyerName = normalizePersonName(lawyerName);
+          const { data: allCaseRows } = await supabase
             .from("cases")
             .select(selectCols)
-            .or(orFilter)
-            .limit(10000);
+            .limit(40000);
+
+          const caseRows = (allCaseRows ?? []).filter((r: any) => {
+            const pLawyers = [
+              r.petitioner_lawyer_1,
+              r.petitioner_lawyer_2,
+              r.petitioner_lawyer_3,
+              r.petitioner_lawyer_4,
+              r.petitioner_lawyer_5,
+            ];
+            const rLawyers = [
+              r.respondent_lawyer_1,
+              r.respondent_lawyer_2,
+              r.respondent_lawyer_3,
+              r.respondent_lawyer_4,
+              r.respondent_lawyer_5,
+            ];
+            const petitionerVirtualName = buildSelfRepresentedLawyerName(r.court_name, "Complainant");
+            const respondentVirtualName = buildSelfRepresentedLawyerName(r.court_name, "Respondent");
+            const hasPetitionerLawyer = pLawyers.some(Boolean);
+            const hasRespondentLawyer = rLawyers.some(Boolean);
+            return [...pLawyers, ...rLawyers].some(
+              (name) => normalizePersonName(name) === canonicalLawyerName
+            )
+              || (!hasPetitionerLawyer && normalizePersonName(petitionerVirtualName) === canonicalLawyerName)
+              || (!hasRespondentLawyer && normalizePersonName(respondentVirtualName) === canonicalLawyerName);
+          });
 
           const oppMap = new Map<string, { name: string; cases: number; won: number; lost: number; settled: number }>();
           const judgeMap = new Map<string, { name: string; cases: number; won: number; lost: number; settled: number }>();
@@ -198,8 +226,16 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
             const rLawyers = [r.respondent_lawyer_1, r.respondent_lawyer_2, r.respondent_lawyer_3, r.respondent_lawyer_4, r.respondent_lawyer_5].filter(Boolean);
             const judges = [r.judge_1, r.judge_2, r.judge_3, r.judge_4, r.judge_5, r.judge_6, r.judge_7, r.judge_8, r.judge_9].filter(Boolean);
 
+            const petitionerVirtualName = buildSelfRepresentedLawyerName(r.court_name, "Complainant");
+            const respondentVirtualName = buildSelfRepresentedLawyerName(r.court_name, "Respondent");
             const side: "petitioner" | "respondent" | null =
-              pLawyers.includes(lawyerName) ? "petitioner" : rLawyers.includes(lawyerName) ? "respondent" : null;
+              pLawyers.some((name) => normalizePersonName(name) === canonicalLawyerName)
+                || (!pLawyers.length && normalizePersonName(petitionerVirtualName) === canonicalLawyerName)
+                ? "petitioner"
+                : rLawyers.some((name) => normalizePersonName(name) === canonicalLawyerName)
+                    || (!rLawyers.length && normalizePersonName(respondentVirtualName) === canonicalLawyerName)
+                  ? "respondent"
+                  : null;
             if (side === "petitioner") petitionerAppearances += 1;
             if (side === "respondent") respondentAppearances += 1;
 
@@ -247,7 +283,11 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
             }
 
             // Opponent lawyers
-            const opponents = side === "petitioner" ? rLawyers : side === "respondent" ? pLawyers : [];
+            const opponents = side === "petitioner"
+              ? (rLawyers.length ? rLawyers : [buildSelfRepresentedLawyerName(r.court_name, "Respondent")])
+              : side === "respondent"
+                ? (pLawyers.length ? pLawyers : [buildSelfRepresentedLawyerName(r.court_name, "Complainant")])
+                : [];
             for (const o of opponents) {
               const name = String(o).trim();
               if (!name) continue;

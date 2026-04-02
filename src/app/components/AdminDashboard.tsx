@@ -95,7 +95,7 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       } else if (tab === 'manage-cases') {
         let q = supabase
           .from('cases')
-          .select('id,case_number,case_title,case_type,court_name,status,outcome,filing_date,judgment_date,total_hearings,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5')
+        .select('id,case_number,case_title,case_type,court_name,status,outcome,filing_date,first_hearing_date,last_hearing_date,case_duration_days,avg_gap_between_hearings_days,judgment_date,total_hearings,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5')
           .order('updated_at', { ascending: false })
           .limit(300);
         if (search.trim()) q = q.or(`case_number.ilike.%${search.trim()}%,case_title.ilike.%${search.trim()}%`);
@@ -148,6 +148,15 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       const dt = new Date(Date.UTC(year, month - 1, day));
       if (!Number.isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
     }
+    const dmyShort = s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2})$/);
+    if (dmyShort) {
+      const day = Number(dmyShort[1]);
+      const month = Number(dmyShort[2]);
+      const shortYear = Number(dmyShort[3]);
+      const year = shortYear >= 70 ? 1900 + shortYear : 2000 + shortYear;
+      const dt = new Date(Date.UTC(year, month - 1, day));
+      if (!Number.isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+    }
     const n = Number(s);
     if (Number.isFinite(n) && n >= 20000 && n <= 100000) {
       const wholeDays = Math.floor(n);
@@ -161,19 +170,48 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     return null;
   };
 
+  const normalizeCaseNumber = (value: any): string | null => {
+    if (value === null || value === undefined) return null;
+    const normalized = String(value)
+      .toUpperCase()
+      .replace(/\s+/g, '')
+      .replace(/[–—]/g, '-')
+      .replace(/\/+/g, '/')
+      .trim();
+    return normalized || null;
+  };
+
   const rowsToPayload = async (f: File) => {
     const buf = await f.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: null }) as Record<string, any>[];
+
+    const normalizeHeader = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/[_]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const allRows = wb.SheetNames.flatMap((sheetName) => {
+      const sheet = wb.Sheets[sheetName];
+      return XLSX.utils.sheet_to_json(sheet, { defval: null }) as Record<string, any>[];
+    });
 
     const findFirstByKeyRegex = (row: Record<string, any>, keyRegexes: RegExp[]) => {
       const keys = Object.keys(row);
       for (const k of keys) {
-        const norm = k.toLowerCase().replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim();
+        const norm = normalizeHeader(k);
         if (keyRegexes.some((re) => re.test(norm))) return row[k];
       }
       return null;
+    };
+
+    const hasKeyMatchingRegex = (row: Record<string, any>, keyRegexes: RegExp[]) => {
+      const keys = Object.keys(row);
+      return keys.some((k) => {
+        const norm = normalizeHeader(k);
+        return keyRegexes.some((re) => re.test(norm));
+      });
     };
 
     const collectByKeyRegexWithIndex = (
@@ -183,7 +221,7 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     ) => {
       const entries = Object.entries(row)
         .map(([k, v]) => {
-          const norm = k.toLowerCase();
+          const norm = normalizeHeader(k);
           if (!keyRegex.test(norm)) return null;
           const m = norm.match(/(\d+)/);
           const idx = m ? Number(m[1]) : 0;
@@ -198,36 +236,193 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
         .slice(0, maxCount);
     };
 
-    const payload = rows.map((r) => {
-      const caseNumber = findFirstByKeyRegex(r, [/compla/i, /complaint/i, /case number/i, /case_number/i]);
-      const caseTitle = findFirstByKeyRegex(r, [/case title/i, /case ti/i, /case titl/i]) ?? 'Untitled case';
-      const caseType = findFirstByKeyRegex(r, [/case type/i, /case ty/i, /case type/i]) ?? 'Complaint';
-      const courtName = findFirstByKeyRegex(r, [/court/i]) ?? 'Unknown Court';
-      const outcomeRaw = findFirstByKeyRegex(r, [/outcome/i]);
+    const parseNullableNumber = (value: any) => {
+      if (value === null || value === undefined) return null;
+      const str = String(value).trim();
+      if (!str) return null;
+      const num = Number(str);
+      return Number.isFinite(num) ? num : null;
+    };
 
-      // Excel headers vary: some use "judge 1..9", some "Judgem", etc. We collect by regex + index.
-      const judges = collectByKeyRegexWithIndex(r, /^judge\s*\d+|^judge\d+/i, 9);
-      const pLawyers = collectByKeyRegexWithIndex(r, /^(petitioner\s*lawyer|petition)\s*\d+|^(petitioner\s*lawyer|petition)\d+/i, 5);
-      const rLawyers = collectByKeyRegexWithIndex(r, /^(respondent\s*lawyer|respond)\s*\d+|^(respondent\s*lawyer|respond)\d+/i, 5);
+    const mergedRows = new Map<string, Record<string, any>>();
+    const mergeRowValues = (existing: Record<string, any>, incoming: Record<string, any>) => {
+      const merged = { ...existing };
+      Object.entries(incoming).forEach(([key, value]) => {
+        const hasMeaningfulValue = value !== null && value !== undefined && String(value).trim() !== '';
+        if (hasMeaningfulValue || !(key in merged)) {
+          merged[key] = value;
+        }
+      });
+      return merged;
+    };
+
+    allRows.forEach((row) => {
+      const caseNumberRaw = findFirstByKeyRegex(row, [
+        /complaint number/i,
+        /complaint/i,
+        /compla/i,
+        /case number/i,
+        /case_number/i,
+      ]);
+      const caseNumber = normalizeCaseNumber(caseNumberRaw) ?? '';
+      if (!caseNumber) return;
+      const existing = mergedRows.get(caseNumber) ?? {};
+      mergedRows.set(caseNumber, mergeRowValues(existing, row));
+    });
+
+    const payload = Array.from(mergedRows.values()).map((r) => {
+      const caseNumberRegexes = [
+        /complaint number/i,
+        /compla/i,
+        /complia/i,
+        /complaint/i,
+        /compliant/i,
+        /case number/i,
+        /case_number/i,
+      ];
+      const caseTitleRegexes = [/case title/i, /case ti/i, /case titl/i];
+      const caseTypeRegexes = [/case type/i, /case ty/i, /case type/i];
+      const courtNameRegexes = [/court/i];
+      const outcomeRegexes = [/outcome/i];
+      const petitionerNameRegexes = [/^complainant$/i, /^petitioner$/i, /petitioner name/i, /complainant name/i];
+      const respondentNameRegexes = [/^respondent$/i, /respondent name/i];
+      const filingDateRegexes = [/filing date/i, /^filing$/i];
+      const judgmentDateRegexes = [/judgement date/i, /judgment date/i, /^judgement$/i, /^judgment$/i];
+      const statusRegexes = [/status/i, /disposal/i];
+      const firstHearingRegexes = [/^first hearing$/i, /^first_hearing$/i, /first hearing/i];
+      const lastHearingRegexes = [/^last hearing$/i, /^last_hearing$/i, /last hearing/i];
+      const durationRegexes = [/^case duration days$/i, /^case_duration_days$/i, /^duration$/i, /case duration/i, /durati/i];
+      const avgGapRegexes = [/^avg gap days$/i, /^avg_gap_days$/i, /^avg gap day$/i, /avg gap/i, /avg gap day/i];
+      const totalHearingsRegexes = [/^total hearing$/i, /^total_hearing$/i, /^total hearings$/i, /^total_hearings$/i, /total number of hearings/i];
+
+      const caseNumber = normalizeCaseNumber(findFirstByKeyRegex(r, caseNumberRegexes));
+      const caseTitle = findFirstByKeyRegex(r, caseTitleRegexes);
+      const caseType = findFirstByKeyRegex(r, caseTypeRegexes);
+      const courtName = findFirstByKeyRegex(r, courtNameRegexes);
+      const outcomeRaw = findFirstByKeyRegex(r, outcomeRegexes);
+
+      // Excel headers vary heavily; accept numbered and repeated petitioner/respondent/judge columns.
+      const judges = collectByKeyRegexWithIndex(
+        r,
+        /^(judge)(?:\s+\d+)?$|^(judge)\d+$|^judge\b/i,
+        9
+      );
+      const pLawyers = collectByKeyRegexWithIndex(
+        r,
+        /^(petitioner(?: lawyer)?|petition(?:er)?)(?:\s+\d+)?$|^(petitioner(?: lawyer)?|petition(?:er)?).*/i,
+        5
+      );
+      const rLawyers = collectByKeyRegexWithIndex(
+        r,
+        /^(respondent(?: lawyer)?|respond)(?:\s+\d+)?$|^(respondent(?: lawyer)?|respond).*/i,
+        5
+      );
+      const hearingValues = collectByKeyRegexWithIndex(r, /^hearing\s*\d+|^hearing\d+/i, 200);
+      const hearingDates = Array.from(
+        new Set(
+          hearingValues
+            .map((v) => parseDate(v))
+            .filter((v): v is string => !!v)
+        )
+      ).sort();
+      const explicitFirstHearing = parseDate(findFirstByKeyRegex(r, firstHearingRegexes));
+      const explicitLastHearing = parseDate(findFirstByKeyRegex(r, lastHearingRegexes));
+      const explicitDuration = (() => {
+        const raw = findFirstByKeyRegex(r, durationRegexes);
+        const num = parseNullableNumber(raw);
+        return num !== null ? num : null;
+      })();
+      const explicitAvgGap = (() => {
+        const raw = findFirstByKeyRegex(r, avgGapRegexes);
+        const num = parseNullableNumber(raw);
+        return num !== null ? Math.round((num + Number.EPSILON) * 100) / 100 : null;
+      })();
+      const explicitTotalHearings =
+        parseNullableNumber(
+          findFirstByKeyRegex(r, totalHearingsRegexes)
+        )
+        ?? parseNullableNumber(r['total_hearings'])
+        ?? parseNullableNumber(r['total_hearing']);
+      const firstHearing = explicitFirstHearing ?? hearingDates[0] ?? null;
+      const lastHearing = explicitLastHearing ?? (hearingDates.length ? hearingDates[hearingDates.length - 1] : null);
+      const durationDays = explicitDuration ??
+        (firstHearing && lastHearing
+          ? Math.max(
+              0,
+              Math.round((new Date(lastHearing).getTime() - new Date(firstHearing).getTime()) / 86400000)
+            )
+          : null);
+      const avgGapDays = explicitAvgGap ?? (() => {
+        if (hearingDates.length < 2) return null;
+        let sum = 0;
+        let count = 0;
+        for (let i = 1; i < hearingDates.length; i++) {
+          const prev = new Date(hearingDates[i - 1]).getTime();
+          const cur = new Date(hearingDates[i]).getTime();
+          const gap = (cur - prev) / 86400000;
+          if (Number.isFinite(gap) && gap >= 0) {
+            sum += gap;
+            count += 1;
+          }
+        }
+        if (count === 0) return null;
+        return Math.round(((sum / count) + Number.EPSILON) * 100) / 100;
+      })();
 
       const summaryValues = collectByKeyRegexWithIndex(r, /^summary\s*\d+|^summary\d+/i, 50);
       const summaries = summaryValues.length ? summaryValues : [];
 
-      const petitioner_lawyers = pLawyers.length ? pLawyers : ['Complainant without a lawyer'];
-      const respondent_lawyers = rLawyers.length ? rLawyers : ['Respondent without a Lawyer'];
-      const judges_final = judges.length ? judges : ['Unknown Judge'];
+      const petitioner_lawyers = pLawyers;
+      const respondent_lawyers = rLawyers;
+      const judges_final = judges;
 
       const j = (i: number) => judges_final[i] ?? null;
       const pl = (i: number) => petitioner_lawyers[i] ?? null;
       const rl = (i: number) => respondent_lawyers[i] ?? null;
 
+      const presentColumns = [
+        hasKeyMatchingRegex(r, caseTitleRegexes) ? 'case_title' : null,
+        hasKeyMatchingRegex(r, caseTypeRegexes) ? 'case_type' : null,
+        hasKeyMatchingRegex(r, courtNameRegexes) ? 'court_name' : null,
+        hasKeyMatchingRegex(r, petitionerNameRegexes) ? 'petitioner_name' : null,
+        hasKeyMatchingRegex(r, respondentNameRegexes) ? 'respondent_name' : null,
+        hasKeyMatchingRegex(r, filingDateRegexes) ? 'filing_date' : null,
+        hasKeyMatchingRegex(r, judgmentDateRegexes) ? 'judgment_date' : null,
+        hasKeyMatchingRegex(r, statusRegexes) ? 'status' : null,
+        hasKeyMatchingRegex(r, outcomeRegexes) ? 'outcome' : null,
+        hasKeyMatchingRegex(r, firstHearingRegexes) ? 'first_hearing_date' : null,
+        hasKeyMatchingRegex(r, lastHearingRegexes) ? 'last_hearing_date' : null,
+        hasKeyMatchingRegex(r, durationRegexes) ? 'case_duration_days' : null,
+        hasKeyMatchingRegex(r, avgGapRegexes) ? 'avg_gap_between_hearings_days' : null,
+        hasKeyMatchingRegex(r, totalHearingsRegexes) || Object.prototype.hasOwnProperty.call(r, 'total_hearings') || Object.prototype.hasOwnProperty.call(r, 'total_hearing') ? 'total_hearings' : null,
+        judges.length > 0 ? 'judge_1' : null,
+        judges.length > 1 ? 'judge_2' : null,
+        judges.length > 2 ? 'judge_3' : null,
+        judges.length > 3 ? 'judge_4' : null,
+        judges.length > 4 ? 'judge_5' : null,
+        judges.length > 5 ? 'judge_6' : null,
+        judges.length > 6 ? 'judge_7' : null,
+        judges.length > 7 ? 'judge_8' : null,
+        judges.length > 8 ? 'judge_9' : null,
+        petitioner_lawyers.length > 0 ? 'petitioner_lawyer_1' : null,
+        petitioner_lawyers.length > 1 ? 'petitioner_lawyer_2' : null,
+        petitioner_lawyers.length > 2 ? 'petitioner_lawyer_3' : null,
+        petitioner_lawyers.length > 3 ? 'petitioner_lawyer_4' : null,
+        petitioner_lawyers.length > 4 ? 'petitioner_lawyer_5' : null,
+        respondent_lawyers.length > 0 ? 'respondent_lawyer_1' : null,
+        respondent_lawyers.length > 1 ? 'respondent_lawyer_2' : null,
+        respondent_lawyers.length > 2 ? 'respondent_lawyer_3' : null,
+        respondent_lawyers.length > 3 ? 'respondent_lawyer_4' : null,
+        respondent_lawyers.length > 4 ? 'respondent_lawyer_5' : null,
+      ].filter(Boolean) as string[];
+
       return {
-        case_number: caseNumber ? String(caseNumber).trim() : null,
-        case_title: String(caseTitle),
-        case_type: String(caseType),
-        court_name: String(courtName),
-        petitioner_name: findFirstByKeyRegex(r, [/complainant/i, /petitioner_name/i, /petition$/i]) ?? null,
-        respondent_name: findFirstByKeyRegex(r, [/respondent/i, /respondent_name/i, /respond$/i]) ?? null,
+        case_number: caseNumber,
+        case_title: caseTitle ? String(caseTitle).trim() : null,
+        case_type: caseType ? String(caseType).trim() : null,
+        court_name: courtName ? String(courtName).trim() : null,
+        petitioner_name: findFirstByKeyRegex(r, petitionerNameRegexes) ?? null,
+        respondent_name: findFirstByKeyRegex(r, respondentNameRegexes) ?? null,
 
         // Wide schema: up to 9 judges
         judge_1: j(0),
@@ -253,21 +448,24 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
         respondent_lawyer_4: rl(3),
         respondent_lawyer_5: rl(4),
 
-        filing_date: parseDate(r['Filing Date'] || r['filing date'] || r['FilingDate']),
-        judgment_date: parseDate(r['Judgement Date'] || r['Judgment Date'] || r['judgement_date'] || r['judgment_date']),
-        total_hearings:
-          Number(
-            findFirstByKeyRegex(r, [/total number of hearings/i, /hearings/i])
-          ) || Number(r['total_hearings'] ?? 0) || 0,
+        first_hearing_date: firstHearing,
+        last_hearing_date: lastHearing,
+        case_duration_days: durationDays,
+        avg_gap_between_hearings_days: avgGapDays,
+        filing_date: parseDate(findFirstByKeyRegex(r, filingDateRegexes)) ?? firstHearing,
+        judgment_date: parseDate(findFirstByKeyRegex(r, judgmentDateRegexes)),
+        total_hearings: explicitTotalHearings ?? (hearingDates.length > 0 ? hearingDates.length : null),
         status: (() => {
-          const statusRaw = findFirstByKeyRegex(r, [/status/i, /disposal/i]);
-          const s = String(statusRaw ?? 'pending').toLowerCase();
+          const statusRaw = findFirstByKeyRegex(r, statusRegexes);
+          if (statusRaw === null || statusRaw === undefined || String(statusRaw).trim() === '') return null;
+          const s = String(statusRaw).toLowerCase();
           return s.includes('dispose') || s.includes('disposed') ? 'disposed' : 'pending';
         })(),
         outcome: outcomeRaw ? String(outcomeRaw).trim() : null,
         summary: summaries.join('\n') || null,
         data_source: 'csv_import',
         verified: false,
+        __present_columns: presentColumns,
       };
     }).filter((x) => x.case_number);
 
@@ -279,8 +477,39 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     setMessage('');
     try {
       const supabase = getSupabase();
-      const { error } = await supabase.rpc('admin_reset_data', { p_delete_cases: true });
-      if (error) throw error;
+
+      // Delete dependent rows first, then primary entity tables.
+      const deleteAll = async (table: string) => {
+        const { error } = await supabase.from(table as any).delete().not('id', 'is', null);
+        if (error) throw error;
+      };
+
+      // Case-linked/support tables
+      await deleteAll('case_claims');
+      await deleteAll('card_claims');
+      await deleteAll('saved_lawyers');
+      await deleteAll('consultation_requests');
+      await deleteAll('lawyer_judge_analytics');
+      await deleteAll('lawyer_analytics');
+      await deleteAll('judge_analytics');
+      await deleteAll('court_analytics');
+
+      // Legacy/normalized support tables if present in this database
+      for (const maybeTable of ['case_lawyers', 'case_judges']) {
+        const { error } = await supabase.from(maybeTable as any).delete().not('id', 'is', null);
+        if (error && !/does not exist|relation .* does not exist/i.test(error.message)) {
+          throw error;
+        }
+      }
+
+      // Cases first so referenced entities can be removed safely
+      await deleteAll('cases');
+
+      // Primary entity tables
+      await deleteAll('courts');
+      await deleteAll('judges');
+      await deleteAll('lawyers');
+
       setMessage('All data reset complete. You can upload fresh cases now.');
       await fetchStats();
       setLawyers([]);
@@ -304,17 +533,57 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     try {
       const payload = await rowsToPayload(file);
       const supabase = getSupabase();
+      const sampleCaseNumber = payload[0]?.case_number ?? null;
 
       // Batch the RPC calls to avoid overwhelming PostgREST / DB on large Excel files.
-      // Also skip expensive reference-sync during intermediate batches.
+      // Use partial-upsert RPC so blank cells do not overwrite existing populated values.
       const batchSize = 100;
       let processed = 0;
+      const mergeUploadRow = (existing: Record<string, any> | null, incoming: Record<string, any>) => {
+        const merged = { ...(existing ?? {}) };
+        const presentColumns = Array.isArray(incoming.__present_columns) ? incoming.__present_columns : [];
+        Object.entries(incoming).forEach(([key, value]) => {
+          if (key === '__present_columns') return;
+          if (key !== 'case_number' && !presentColumns.includes(key)) return;
+          const shouldKeepExisting =
+            value === null
+            || value === undefined
+            || (typeof value === 'string' && value.trim() === '');
+          if (!shouldKeepExisting) {
+            merged[key] = value;
+          } else if (!(key in merged)) {
+            merged[key] = null;
+          }
+        });
+        return merged;
+      };
+
       for (let i = 0; i < payload.length; i += batchSize) {
         const batch = payload.slice(i, i + batchSize);
         const isLast = i + batchSize >= payload.length;
         setMessage(`Uploading batch ${Math.floor(i / batchSize) + 1}... rows ${i + 1}-${i + batch.length}`);
-        const { error } = await supabase.rpc('admin_import_cases_json_skip_sync', {
-          p_rows: batch,
+        const caseNumbers = batch
+          .map((row) => row.case_number)
+          .filter((value): value is string => typeof value === 'string' && value.length > 0);
+        const { data: existingRows, error: existingError } = await (supabase.from('cases') as any)
+          .select('case_number,case_title,case_type,court_name,petitioner_name,respondent_name,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5,filing_date,judgment_date,total_hearings,first_hearing_date,last_hearing_date,case_duration_days,avg_gap_between_hearings_days,status,outcome,summary,data_source,verified')
+          .in('case_number', caseNumbers);
+        if (existingError) throw existingError;
+
+        const existingMap = new Map<string, Record<string, any>>();
+        (existingRows ?? []).forEach((row: Record<string, any>) => {
+          const key = normalizeCaseNumber(row.case_number);
+          if (key) existingMap.set(key, row);
+        });
+
+        const mergedBatch = batch.map((row) => {
+          const mergedRow = mergeUploadRow(existingMap.get(row.case_number) ?? null, row);
+          delete (mergedRow as any).__present_columns;
+          return mergedRow;
+        });
+
+        const { error } = await (supabase as any).rpc('admin_import_cases_json_skip_sync', {
+          p_rows: mergedBatch,
           p_replace_existing: false,
           p_skip_sync: !isLast,
         });
@@ -322,7 +591,20 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
         processed += batch.length;
       }
 
-      setMessage(`Upload complete. Processed ${processed} rows.`);
+      let verificationMessage = '';
+      if (sampleCaseNumber) {
+        const { data: storedRow, error: verificationError } = await (supabase.from('cases') as any)
+          .select('case_number,total_hearings,first_hearing_date,last_hearing_date,case_duration_days,avg_gap_between_hearings_days')
+          .eq('case_number', sampleCaseNumber)
+          .maybeSingle();
+        if (verificationError) {
+          verificationMessage = ` Verification read failed for ${sampleCaseNumber}: ${verificationError.message}`;
+        } else if (storedRow) {
+          verificationMessage = ` Verified ${sampleCaseNumber}: total_hearings=${storedRow.total_hearings ?? 'null'}, first_hearing_date=${storedRow.first_hearing_date ?? 'null'}, last_hearing_date=${storedRow.last_hearing_date ?? 'null'}, case_duration_days=${storedRow.case_duration_days ?? 'null'}, avg_gap_between_hearings_days=${storedRow.avg_gap_between_hearings_days ?? 'null'}.`;
+        }
+      }
+
+      setMessage(`Upload complete. Processed ${processed} rows.${verificationMessage}`);
       await fetchStats();
     } catch (e: any) {
       setMessage(`Upload failed: ${e?.message || 'Unknown error'}`);
@@ -344,18 +626,90 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     setMessage('');
     try {
       const supabase = getSupabase();
+      setMessage('Running master analysis across lawyer, judge, court, and lawyer-judge analytics...');
 
-      // Run client-side wide rebuild deterministically (no server paging reliance)
-      setMessage('Running master analysis (client-wide rebuild)…');
-      await rebuildLawyerAnalyticsClientWide();
+      const [{ count: totalProcessed }, lawyerReset, judgeReset, courtReset, pairReset] = await Promise.all([
+        supabase.from('cases').select('id', { count: 'exact', head: true }),
+        supabase.from('lawyer_analytics').delete().not('lawyer_id', 'is', null),
+        supabase.from('judge_analytics').delete().not('judge_id', 'is', null),
+        supabase.from('court_analytics').delete().not('court_id', 'is', null),
+        supabase.from('lawyer_judge_analytics').delete().not('lawyer_id', 'is', null),
+      ]);
+      if (lawyerReset.error) throw lawyerReset.error;
+      if (judgeReset.error) throw judgeReset.error;
+      if (courtReset.error) throw courtReset.error;
+      if (pairReset.error) throw pairReset.error;
 
-      // Recompute tri-factor ranks on refreshed analytics
-      const { error: triErr } = await supabase.rpc('admin_compute_tri_ranks_all', { p_batch_size: 200 });
-      if (triErr) throw triErr;
+      const syncedEntities = await syncEntitiesFromCasesWide();
+      const { count: casesWithLawyersBeforeMerge } = await supabase
+        .from('cases')
+        .select('id', { count: 'exact', head: true })
+        .or([
+          'petitioner_lawyer_1.not.is.null',
+          'petitioner_lawyer_2.not.is.null',
+          'petitioner_lawyer_3.not.is.null',
+          'petitioner_lawyer_4.not.is.null',
+          'petitioner_lawyer_5.not.is.null',
+          'respondent_lawyer_1.not.is.null',
+          'respondent_lawyer_2.not.is.null',
+          'respondent_lawyer_3.not.is.null',
+          'respondent_lawyer_4.not.is.null',
+          'respondent_lawyer_5.not.is.null',
+        ].join(','));
+      setMessage('Merging duplicate lawyer and judge cards...');
+      const mergeCardsData = await bulkMergeDuplicateReferenceCards();
+      const { count: casesWithLawyersAfterMerge } = await supabase
+        .from('cases')
+        .select('id', { count: 'exact', head: true })
+        .or([
+          'petitioner_lawyer_1.not.is.null',
+          'petitioner_lawyer_2.not.is.null',
+          'petitioner_lawyer_3.not.is.null',
+          'petitioner_lawyer_4.not.is.null',
+          'petitioner_lawyer_5.not.is.null',
+          'respondent_lawyer_1.not.is.null',
+          'respondent_lawyer_2.not.is.null',
+          'respondent_lawyer_3.not.is.null',
+          'respondent_lawyer_4.not.is.null',
+          'respondent_lawyer_5.not.is.null',
+        ].join(','));
+      const rebuildCount = await rebuildLawyerAnalyticsClientWide();
+      const judgeRebuilt = await rebuildJudgeAnalyticsClientWide();
+      const courtRebuilt = await rebuildCourtAnalyticsClientWide();
+      const pairRebuilt = await rebuildLawyerJudgeAnalyticsClientWide();
 
-      // Summarize from lawyer_analytics after rebuild
-      const { count: lawyerCount } = await supabase.from('lawyer_analytics').select('lawyer_id', { count: 'exact', head: true });
-      setMessage(`Master analysis complete. Updated analytics for ${lawyerCount ?? 0} lawyers and recomputed tri‑factor ranks.`);
+      setMessage('Computing tri-factor ranks in batches...');
+      const { count: triRankTotal } = await supabase
+        .from('lawyer_analytics')
+        .select('lawyer_id', { count: 'exact', head: true });
+      const triBatchSize = 200;
+      const triLoops = Math.ceil(Math.max(1, triRankTotal ?? 0) / triBatchSize);
+      let triFactorCount = 0;
+      for (let i = 0; i < triLoops; i += 1) {
+        setMessage(`Computing tri-factor ranks... batch ${i + 1} of ${triLoops}`);
+        const { data, error } = await (supabase as any).rpc('admin_compute_tri_ranks_batch', {
+          p_batch_size: triBatchSize,
+          p_offset: i * triBatchSize,
+        });
+        if (error) throw error;
+        triFactorCount += Number(data ?? 0);
+      }
+
+      const [judgeCount, courtCount, lawyerJudgeCount] = await Promise.all([
+        supabase.from('judge_analytics').select('judge_id', { count: 'exact', head: true }),
+        supabase.from('court_analytics').select('court_id', { count: 'exact', head: true }),
+        supabase.from('lawyer_judge_analytics').select('lawyer_id', { count: 'exact', head: true }),
+      ]);
+
+      setMessage(
+        `Master analysis complete. Processed ${Number(totalProcessed ?? 0)} cases, updated ${Number(rebuildCount ?? 0)} lawyer rows, `
+        + `${judgeRebuilt || judgeCount.count || 0} judge rows, ${courtRebuilt || courtCount.count || 0} court rows, `
+        + `${pairRebuilt || lawyerJudgeCount.count || 0} lawyer-judge rows, and recomputed ${Number(triFactorCount ?? 0)} tri-factor ranks. `
+        + `Entity sync added ${syncedEntities.lawyers} lawyers, ${syncedEntities.judges} judges, and ${syncedEntities.courts} courts from cases. `
+        + `Duplicate merge found ${Number(mergeCardsData?.lawyer_duplicate_groups ?? 0)} lawyer groups and ${Number(mergeCardsData?.judge_duplicate_groups ?? 0)} judge groups. `
+        + `Merged ${Number(mergeCardsData?.merged_lawyers ?? 0)} duplicate lawyer cards and ${Number(mergeCardsData?.merged_judges ?? 0)} duplicate judge cards. `
+        + `Safety check: cases with lawyers before merge = ${Number(casesWithLawyersBeforeMerge ?? 0)}, after merge = ${Number(casesWithLawyersAfterMerge ?? 0)}.`
+      );
     } catch (e: any) {
       setMessage(`Master analysis failed: ${e?.message || 'Unknown error'}`);
     } finally {
@@ -382,20 +736,85 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     return x;
   };
 
+  const normalizeMergeKey = (s: string | null | undefined) => {
+    const base = normalizeName(s);
+    if (!base) return '';
+    const tokens = base
+      .split(' ')
+      .map((token) => token.trim())
+      .filter(Boolean)
+      .filter((token) => token.length > 1)
+      .map((token) => {
+        const deduped = token.replace(/(.)\1+/g, '$1');
+        if (deduped.length <= 3) return deduped;
+        return `${deduped[0]}${deduped.slice(1).replace(/[aeiou]/g, '')}`;
+      })
+      .sort();
+    return tokens.join(' ');
+  };
+
+  const buildSelfRepresentedLawyerName = (
+    courtName: string | null | undefined,
+    side: 'Complainant' | 'Respondent'
+  ) => {
+    const court = String(courtName ?? '').trim() || 'Unknown Court';
+    return `${court} ${side} without a lawyer`;
+  };
+
+  const normalizeOutcomeForAnalytics = (
+    outcomeRaw: string | null,
+    statusRaw: string | null,
+    summaryRaw: string | null
+  ) => {
+    const o = (outcomeRaw ?? '').toLowerCase();
+    const s = (statusRaw ?? '').toLowerCase();
+    const sum = (summaryRaw ?? '').toLowerCase();
+    const hay = `${o} ${s} ${sum}`;
+    if (/settled|conciliation|compromise/.test(hay)) return 'settled' as const;
+    if (/(in\s+favor\s+of\s+complainant|complainant\s+win|complainant\s+allowed|allowed\s+complaint)/.test(hay)) {
+      return 'complainant' as const;
+    }
+    if (/(in\s+favor\s+of\s+respondent|respondent\s+win|complaint\s+dismissed|rejected)/.test(hay)) {
+      return 'respondent' as const;
+    }
+    return 'other' as const;
+  };
+
+  const syncEntitiesFromCasesWide = async () => {
+    const supabase = getSupabase();
+    setMessage('Syncing lawyers, judges, and courts from cases ...');
+    let offset = 0;
+    let hasMore = true;
+    let totals = { lawyers: 0, judges: 0, courts: 0 };
+    const batchSize = 1000;
+
+    while (hasMore) {
+      setMessage(`Syncing lawyers, judges, and courts from cases ... rows ${offset + 1}-${offset + batchSize}`);
+      const { data, error } = await (supabase as any).rpc('admin_sync_reference_tables_from_cases_wide', {
+        p_offset: offset,
+        p_batch_size: batchSize,
+      });
+      if (error) throw error;
+      totals = {
+        lawyers: totals.lawyers + Number(data?.lawyers ?? 0),
+        judges: totals.judges + Number(data?.judges ?? 0),
+        courts: totals.courts + Number(data?.courts ?? 0),
+      };
+      hasMore = Boolean(data?.has_more);
+      offset = Number(data?.next_offset ?? offset + batchSize);
+      if (Number(data?.processed ?? 0) === 0) break;
+    }
+
+    return {
+      lawyers: totals.lawyers,
+      judges: totals.judges,
+      courts: totals.courts,
+    };
+  };
+
   const rebuildLawyerAnalyticsClientWide = async () => {
     const supabase = getSupabase();
     setMessage('Rebuilding lawyer analytics (wide) ...');
-
-    const normalizeOutcome = (outcomeRaw: string | null, statusRaw: string | null, summaryRaw: string | null) => {
-      const o = (outcomeRaw ?? '').toLowerCase();
-      const s = (statusRaw ?? '').toLowerCase();
-      const sum = (summaryRaw ?? '').toLowerCase();
-      const hay = `${o} ${s} ${sum}`;
-      if (/settled|conciliation|compromise/.test(hay)) return 'settled';
-      if (/(in\s+favor\s+of\s+complainant|complainant\s+win|complainant\s+allowed|allowed\s+complaint)/.test(hay)) return 'complainant';
-      if (/(in\s+favor\s+of\s+respondent|respondent\s+win|complaint\s+dismissed|rejected)/.test(hay)) return 'respondent';
-      return 'other';
-    };
 
     // Build lawyer lookup by canonical name
     const lawyersMap = new Map<string, { id: string; name: string }>();
@@ -463,19 +882,21 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       while (true) {
         const { data, error } = await supabase
           .from('cases')
-          .select('case_number,outcome,status,summary,filing_date,judgment_date,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5')
+          .select('case_number,court_name,outcome,status,summary,filing_date,first_hearing_date,judgment_date,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5')
           .order('updated_at', { ascending: false })
           .range(from, from + page - 1);
         if (error) throw error;
         (data ?? []).forEach((c: any) => {
           const cn = String(c.case_number ?? '').trim();
-          const norm = normalizeOutcome(c.outcome ?? null, c.status ?? null, c.summary ?? null) as 'complainant' | 'respondent' | 'settled' | 'other';
-          const fd = c.filing_date ?? null;
+          const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
+          const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
           const jd = c.judgment_date ?? null;
-          const pets = [c.petitioner_lawyer_1, c.petitioner_lawyer_2, c.petitioner_lawyer_3, c.petitioner_lawyer_4, c.petitioner_lawyer_5];
-          const ress = [c.respondent_lawyer_1, c.respondent_lawyer_2, c.respondent_lawyer_3, c.respondent_lawyer_4, c.respondent_lawyer_5];
-          pets.filter(Boolean).forEach((n: string) => credit(n, cn, 'Complainant', norm, fd, jd));
-          ress.filter(Boolean).forEach((n: string) => credit(n, cn, 'Respondent', norm, fd, jd));
+          const pets = [c.petitioner_lawyer_1, c.petitioner_lawyer_2, c.petitioner_lawyer_3, c.petitioner_lawyer_4, c.petitioner_lawyer_5].filter(Boolean);
+          const ress = [c.respondent_lawyer_1, c.respondent_lawyer_2, c.respondent_lawyer_3, c.respondent_lawyer_4, c.respondent_lawyer_5].filter(Boolean);
+          const petitionerLawyers = pets.length ? pets : [buildSelfRepresentedLawyerName(c.court_name, 'Complainant')];
+          const respondentLawyers = ress.length ? ress : [buildSelfRepresentedLawyerName(c.court_name, 'Respondent')];
+          petitionerLawyers.forEach((n: string) => credit(n, cn, 'Complainant', norm, fd, jd));
+          respondentLawyers.forEach((n: string) => credit(n, cn, 'Respondent', norm, fd, jd));
         });
         if (!data || data.length < page) break;
         from += page;
@@ -516,6 +937,500 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       setMessage(`Rebuilding lawyer analytics (wide) ... upserted ${Math.min(i + chunk, rows.length)} / ${rows.length}`);
     }
     setMessage(`Rebuilding lawyer analytics (wide) ... completed for ${rows.length} lawyers`);
+  };
+
+  const rebuildJudgeAnalyticsClientWide = async () => {
+    const supabase = getSupabase();
+    setMessage('Rebuilding judge analytics (wide) ...');
+
+    const judgesMap = new Map<string, { id: string; name: string }>();
+    let from = 0;
+    const page = 1000;
+    while (true) {
+      const { data, error } = await supabase.from('judges').select('id,name').range(from, from + page - 1);
+      if (error) throw error;
+      (data ?? []).forEach((j: any) => {
+        const k = normalizeName(j.name);
+        if (k) judgesMap.set(k, { id: j.id, name: j.name });
+      });
+      if (!data || data.length < page) break;
+      from += page;
+    }
+
+    type JudgeAcc = {
+      judge_id: string;
+      judge_name: string;
+      cases: Set<string>;
+      favorComplainant: number;
+      favorRespondent: number;
+      settled: number;
+      dismissed: number;
+      withdrawn: number;
+      partiallyGranted: number;
+      durationSum: number;
+      durationCount: number;
+    };
+    const accByJudgeId = new Map<string, JudgeAcc>();
+
+    const creditJudge = (
+      rawName: string | null,
+      caseNumber: string,
+      normOutcome: 'complainant' | 'respondent' | 'settled' | 'other',
+      statusRaw: string | null,
+      filing: string | null,
+      judgment: string | null
+    ) => {
+      const keyName = normalizeName(rawName);
+      if (!keyName) return;
+      const judge = judgesMap.get(keyName);
+      if (!judge) return;
+      let acc = accByJudgeId.get(judge.id);
+      if (!acc) {
+        acc = {
+          judge_id: judge.id,
+          judge_name: judge.name,
+          cases: new Set(),
+          favorComplainant: 0,
+          favorRespondent: 0,
+          settled: 0,
+          dismissed: 0,
+          withdrawn: 0,
+          partiallyGranted: 0,
+          durationSum: 0,
+          durationCount: 0,
+        };
+        accByJudgeId.set(judge.id, acc);
+      }
+      if (!acc.cases.has(caseNumber)) acc.cases.add(caseNumber);
+      if (normOutcome === 'complainant') acc.favorComplainant += 1;
+      else if (normOutcome === 'respondent') acc.favorRespondent += 1;
+      else if (normOutcome === 'settled') acc.settled += 1;
+      const status = (statusRaw ?? '').toLowerCase();
+      if (/dismiss|rejected/.test(status)) acc.dismissed += 1;
+      if (/withdraw/.test(status)) acc.withdrawn += 1;
+      if (/partial|partly|in\s+part/.test(status)) acc.partiallyGranted += 1;
+      if (filing && judgment) {
+        const d = (new Date(judgment).getTime() - new Date(filing).getTime()) / 86400000;
+        if (Number.isFinite(d) && d >= 0) {
+          acc.durationSum += Math.round(d);
+          acc.durationCount += 1;
+        }
+      }
+    };
+
+    from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('cases')
+        .select('case_number,outcome,status,summary,filing_date,first_hearing_date,judgment_date,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9')
+        .order('updated_at', { ascending: false })
+        .range(from, from + page - 1);
+      if (error) throw error;
+      (data ?? []).forEach((c: any) => {
+        const cn = String(c.case_number ?? '').trim();
+        const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
+        const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
+        const jd = c.judgment_date ?? null;
+        const judges = [c.judge_1, c.judge_2, c.judge_3, c.judge_4, c.judge_5, c.judge_6, c.judge_7, c.judge_8, c.judge_9];
+        judges.filter(Boolean).forEach((n: string) => creditJudge(n, cn, norm, c.status ?? null, fd, jd));
+      });
+      if (!data || data.length < page) break;
+      from += page;
+      setMessage(`Rebuilding judge analytics (wide) ... processed ${from} cases`);
+    }
+
+    const rows = Array.from(accByJudgeId.values()).map((a) => {
+      const total = a.cases.size;
+      return {
+        judge_id: a.judge_id,
+        judge_name: a.judge_name,
+        total_cases: total,
+        favor_complainant_cases: a.favorComplainant,
+        favor_respondent_cases: a.favorRespondent,
+        settled_cases: a.settled,
+        dismissed_cases: a.dismissed,
+        withdrawn_cases: a.withdrawn,
+        partially_granted_cases: a.partiallyGranted,
+        favor_complainant_rate: total > 0 ? Math.round(((a.favorComplainant / total) * 100 + Number.EPSILON) * 100) / 100 : 0,
+        favor_respondent_rate: total > 0 ? Math.round(((a.favorRespondent / total) * 100 + Number.EPSILON) * 100) / 100 : 0,
+        settlement_rate: total > 0 ? Math.round(((a.settled / total) * 100 + Number.EPSILON) * 100) / 100 : 0,
+        avg_case_duration_days: a.durationCount > 0 ? Math.round((a.durationSum / a.durationCount + Number.EPSILON) * 100) / 100 : 0,
+        duration_sum_days: a.durationSum,
+        duration_count: a.durationCount,
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    const chunk = 200;
+    for (let i = 0; i < rows.length; i += chunk) {
+      const slice = rows.slice(i, i + chunk);
+      const { error } = await (supabase.from('judge_analytics') as any).upsert(slice, { onConflict: 'judge_id' });
+      if (error) throw error;
+    }
+    return rows.length;
+  };
+
+  const rebuildCourtAnalyticsClientWide = async () => {
+    const supabase = getSupabase();
+    setMessage('Rebuilding court analytics (wide) ...');
+
+    const courtsMap = new Map<string, { id: string; name: string }>();
+    let from = 0;
+    const page = 1000;
+    while (true) {
+      const { data, error } = await supabase.from('courts').select('id,name').range(from, from + page - 1);
+      if (error) throw error;
+      (data ?? []).forEach((c: any) => {
+        const k = normalizeName(c.name);
+        if (k) courtsMap.set(k, { id: c.id, name: c.name });
+      });
+      if (!data || data.length < page) break;
+      from += page;
+    }
+
+    type CourtAcc = {
+      court_id: string;
+      court_name: string;
+      cases: Set<string>;
+      favorComplainant: number;
+      favorRespondent: number;
+      settled: number;
+      dismissed: number;
+      withdrawn: number;
+      partiallyGranted: number;
+      durationSum: number;
+      durationCount: number;
+    };
+    const accByCourtId = new Map<string, CourtAcc>();
+
+    from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('cases')
+        .select('case_number,court_name,outcome,status,summary,filing_date,first_hearing_date,judgment_date')
+        .order('updated_at', { ascending: false })
+        .range(from, from + page - 1);
+      if (error) throw error;
+      (data ?? []).forEach((c: any) => {
+        const cn = String(c.case_number ?? '').trim();
+        const court = courtsMap.get(normalizeName(c.court_name));
+        if (!court) return;
+        let acc = accByCourtId.get(court.id);
+        if (!acc) {
+          acc = {
+            court_id: court.id,
+            court_name: court.name,
+            cases: new Set(),
+            favorComplainant: 0,
+            favorRespondent: 0,
+            settled: 0,
+            dismissed: 0,
+            withdrawn: 0,
+            partiallyGranted: 0,
+            durationSum: 0,
+            durationCount: 0,
+          };
+          accByCourtId.set(court.id, acc);
+        }
+        if (!acc.cases.has(cn)) acc.cases.add(cn);
+        const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
+        if (norm === 'complainant') acc.favorComplainant += 1;
+        else if (norm === 'respondent') acc.favorRespondent += 1;
+        else if (norm === 'settled') acc.settled += 1;
+        const status = (c.status ?? '').toLowerCase();
+        if (/dismiss|rejected/.test(status)) acc.dismissed += 1;
+        if (/withdraw/.test(status)) acc.withdrawn += 1;
+        if (/partial|partly|in\s+part/.test(status)) acc.partiallyGranted += 1;
+        const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
+        const jd = c.judgment_date ?? null;
+        if (fd && jd) {
+          const d = (new Date(jd).getTime() - new Date(fd).getTime()) / 86400000;
+          if (Number.isFinite(d) && d >= 0) {
+            acc.durationSum += Math.round(d);
+            acc.durationCount += 1;
+          }
+        }
+      });
+      if (!data || data.length < page) break;
+      from += page;
+    }
+
+    const rows = Array.from(accByCourtId.values()).map((a) => {
+      const total = a.cases.size;
+      return {
+        court_id: a.court_id,
+        court_name: a.court_name,
+        total_cases: total,
+        favor_complainant_cases: a.favorComplainant,
+        favor_respondent_cases: a.favorRespondent,
+        settled_cases: a.settled,
+        dismissed_cases: a.dismissed,
+        withdrawn_cases: a.withdrawn,
+        partially_granted_cases: a.partiallyGranted,
+        settlement_rate: total > 0 ? Math.round(((a.settled / total) * 100 + Number.EPSILON) * 100) / 100 : 0,
+        avg_case_duration_days: a.durationCount > 0 ? Math.round((a.durationSum / a.durationCount + Number.EPSILON) * 100) / 100 : 0,
+        duration_sum_days: a.durationSum,
+        duration_count: a.durationCount,
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    const chunk = 200;
+    for (let i = 0; i < rows.length; i += chunk) {
+      const slice = rows.slice(i, i + chunk);
+      const { error } = await (supabase.from('court_analytics') as any).upsert(slice, { onConflict: 'court_id' });
+      if (error) throw error;
+    }
+    return rows.length;
+  };
+
+  const rebuildLawyerJudgeAnalyticsClientWide = async () => {
+    const supabase = getSupabase();
+    setMessage('Rebuilding lawyer-judge analytics (wide) ...');
+
+    const lawyersMap = new Map<string, { id: string; name: string }>();
+    const judgesMap = new Map<string, { id: string; name: string }>();
+    let from = 0;
+    const page = 1000;
+
+    while (true) {
+      const { data, error } = await supabase.from('lawyers').select('id,name').range(from, from + page - 1);
+      if (error) throw error;
+      (data ?? []).forEach((l: any) => {
+        const k = normalizeName(l.name);
+        if (k) lawyersMap.set(k, { id: l.id, name: l.name });
+      });
+      if (!data || data.length < page) break;
+      from += page;
+    }
+
+    from = 0;
+    while (true) {
+      const { data, error } = await supabase.from('judges').select('id,name').range(from, from + page - 1);
+      if (error) throw error;
+      (data ?? []).forEach((j: any) => {
+        const k = normalizeName(j.name);
+        if (k) judgesMap.set(k, { id: j.id, name: j.name });
+      });
+      if (!data || data.length < page) break;
+      from += page;
+    }
+
+    type PairAcc = {
+      lawyer_id: string;
+      judge_id: string;
+      lawyer_name: string;
+      judge_name: string;
+      cases: Set<string>;
+      won: number;
+      lost: number;
+      settled: number;
+      durationSum: number;
+      durationCount: number;
+    };
+    const accByPair = new Map<string, PairAcc>();
+
+    from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('cases')
+        .select('case_number,court_name,outcome,status,summary,filing_date,first_hearing_date,judgment_date,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5')
+        .order('updated_at', { ascending: false })
+        .range(from, from + page - 1);
+      if (error) throw error;
+      (data ?? []).forEach((c: any) => {
+        const cn = String(c.case_number ?? '').trim();
+        const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
+        const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
+        const jd = c.judgment_date ?? null;
+        const judges = [c.judge_1, c.judge_2, c.judge_3, c.judge_4, c.judge_5, c.judge_6, c.judge_7, c.judge_8, c.judge_9]
+          .map((n: string | null) => judgesMap.get(normalizeName(n)))
+          .filter(Boolean) as Array<{ id: string; name: string }>;
+        const addPair = (rawLawyerName: string | null, side: 'Complainant' | 'Respondent') => {
+          const lawyer = lawyersMap.get(normalizeName(rawLawyerName));
+          if (!lawyer) return;
+          judges.forEach((judge) => {
+            const key = `${lawyer.id}::${judge.id}`;
+            let acc = accByPair.get(key);
+            if (!acc) {
+              acc = {
+                lawyer_id: lawyer.id,
+                judge_id: judge.id,
+                lawyer_name: lawyer.name,
+                judge_name: judge.name,
+                cases: new Set(),
+                won: 0,
+                lost: 0,
+                settled: 0,
+                durationSum: 0,
+                durationCount: 0,
+              };
+              accByPair.set(key, acc);
+            }
+            if (!acc.cases.has(cn)) acc.cases.add(cn);
+            if (norm === 'settled') acc.settled += 1;
+            else if (norm === 'complainant') {
+              if (side === 'Complainant') acc.won += 1;
+              else acc.lost += 1;
+            } else if (norm === 'respondent') {
+              if (side === 'Respondent') acc.won += 1;
+              else acc.lost += 1;
+            }
+            if (fd && jd) {
+              const d = (new Date(jd).getTime() - new Date(fd).getTime()) / 86400000;
+              if (Number.isFinite(d) && d >= 0) {
+                acc.durationSum += Math.round(d);
+                acc.durationCount += 1;
+              }
+            }
+          });
+        };
+        const petitionerLawyers = [c.petitioner_lawyer_1, c.petitioner_lawyer_2, c.petitioner_lawyer_3, c.petitioner_lawyer_4, c.petitioner_lawyer_5]
+          .filter(Boolean);
+        const respondentLawyers = [c.respondent_lawyer_1, c.respondent_lawyer_2, c.respondent_lawyer_3, c.respondent_lawyer_4, c.respondent_lawyer_5]
+          .filter(Boolean);
+        (petitionerLawyers.length ? petitionerLawyers : [buildSelfRepresentedLawyerName(c.court_name, 'Complainant')])
+          .forEach((n: string) => addPair(n, 'Complainant'));
+        (respondentLawyers.length ? respondentLawyers : [buildSelfRepresentedLawyerName(c.court_name, 'Respondent')])
+          .forEach((n: string) => addPair(n, 'Respondent'));
+      });
+      if (!data || data.length < page) break;
+      from += page;
+    }
+
+    const rows = Array.from(accByPair.values()).map((a) => {
+      const total = a.cases.size;
+      return {
+        lawyer_id: a.lawyer_id,
+        judge_id: a.judge_id,
+        lawyer_name: a.lawyer_name,
+        judge_name: a.judge_name,
+        total_cases: total,
+        won_cases: a.won,
+        lost_cases: a.lost,
+        settled_cases: a.settled,
+        win_rate: total > 0 ? Math.round(((a.won / total) * 100 + Number.EPSILON) * 100) / 100 : 0,
+        avg_case_duration_days: a.durationCount > 0 ? Math.round((a.durationSum / a.durationCount + Number.EPSILON) * 100) / 100 : 0,
+        duration_sum_days: a.durationSum,
+        duration_count: a.durationCount,
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    const chunk = 100;
+    for (let i = 0; i < rows.length; i += chunk) {
+      const slice = rows.slice(i, i + chunk);
+      const { error } = await (supabase.from('lawyer_judge_analytics') as any).upsert(slice, {
+        onConflict: 'lawyer_id,judge_id',
+      });
+      if (error) throw error;
+    }
+    return rows.length;
+  };
+
+  const bulkMergeDuplicateReferenceCards = async () => {
+    const supabase = getSupabase();
+
+    const loadAllRows = async (table: 'lawyers' | 'judges') => {
+      const rows: any[] = [];
+      let from = 0;
+      const page = 1000;
+      while (true) {
+        const { data, error } = await supabase
+          .from(table)
+          .select(table === 'lawyers' ? 'id,name,user_id,created_at' : 'id,name,created_at')
+          .range(from, from + page - 1);
+        if (error) throw error;
+        rows.push(...(data ?? []));
+        if (!data || data.length < page) break;
+        from += page;
+      }
+      return rows;
+    };
+
+    const choosePreferredTarget = (rows: any[], table: 'lawyers' | 'judges') =>
+      [...rows].sort((a, b) => {
+        if (table === 'lawyers') {
+          const aScore = a.user_id ? 1 : 0;
+          const bScore = b.user_id ? 1 : 0;
+          if (aScore !== bScore) return bScore - aScore;
+        }
+        const aTime = a.created_at ? new Date(a.created_at).getTime() : Number.MAX_SAFE_INTEGER;
+        const bTime = b.created_at ? new Date(b.created_at).getTime() : Number.MAX_SAFE_INTEGER;
+        if (aTime !== bTime) return aTime - bTime;
+        return String(a.id).localeCompare(String(b.id));
+      })[0];
+
+    const bulkMergeForTable = async (table: 'lawyers' | 'judges') => {
+      const rows = await loadAllRows(table);
+      const groups = new Map<string, any[]>();
+      rows.forEach((row) => {
+        const key = normalizeMergeKey(row.name);
+        if (!key) return;
+        const list = groups.get(key) ?? [];
+        list.push(row);
+        groups.set(key, list);
+      });
+
+      const duplicateGroups = Array.from(groups.values()).filter((group) => group.length >= 2);
+      let mergedCards = 0;
+      let processedGroups = 0;
+
+      setMessage(
+        `Merging duplicate ${table} cards... found ${duplicateGroups.length} duplicate groups.`
+      );
+
+      for (const group of duplicateGroups) {
+        if (group.length < 2) continue;
+        const target = choosePreferredTarget(group, table);
+        const sourceIds = group.map((row) => row.id).filter((id) => id !== target.id);
+        if (!sourceIds.length) continue;
+
+        if (table === 'lawyers') {
+          await supabase.from('saved_lawyers').update({ lawyer_id: target.id }).in('lawyer_id', sourceIds);
+          await supabase.from('consultation_requests').update({ lawyer_id: target.id }).in('lawyer_id', sourceIds);
+          await supabase.from('card_claims').update({ lawyer_id: target.id }).in('lawyer_id', sourceIds);
+          await supabase.from('card_claims').update({ reviewed_by: target.id }).in('reviewed_by', sourceIds);
+          await supabase.from('case_claims').update({ lawyer_id: target.id }).in('lawyer_id', sourceIds);
+          await supabase.from('case_claims').update({ reviewed_by: target.id }).in('reviewed_by', sourceIds);
+          await supabase.from('lawyer_judge_analytics').delete().in('lawyer_id', sourceIds);
+          await supabase.from('lawyer_analytics').delete().in('lawyer_id', sourceIds);
+          await supabase.from('lawyers').update({ name: target.name || null }).eq('id', target.id);
+          const { error: deleteError } = await supabase.from('lawyers').delete().in('id', sourceIds);
+          if (deleteError) throw deleteError;
+        } else {
+          await supabase.from('lawyer_judge_analytics').delete().in('judge_id', sourceIds);
+          await supabase.from('judge_analytics').delete().in('judge_id', sourceIds);
+          await supabase.from('judges').update({ name: target.name || null }).eq('id', target.id);
+          const { error: deleteError } = await supabase.from('judges').delete().in('id', sourceIds);
+          if (deleteError) throw deleteError;
+        }
+
+        mergedCards += sourceIds.length;
+        processedGroups += 1;
+        setMessage(
+          `Merging duplicate ${table} cards... merged ${processedGroups} of ${duplicateGroups.length} groups (${mergedCards} duplicate cards consolidated).`
+        );
+      }
+
+      setMessage(
+        `Merged duplicate ${table} cards. Processed ${duplicateGroups.length} groups and consolidated ${mergedCards} duplicate cards.`
+      );
+
+      return {
+        duplicateGroups: duplicateGroups.length,
+        mergedCards,
+      };
+    };
+
+    const mergedLawyers = await bulkMergeForTable('lawyers');
+    const mergedJudges = await bulkMergeForTable('judges');
+    return {
+      lawyer_duplicate_groups: mergedLawyers.duplicateGroups,
+      judge_duplicate_groups: mergedJudges.duplicateGroups,
+      merged_lawyers: mergedLawyers.mergedCards,
+      merged_judges: mergedJudges.mergedCards,
+    };
   };
 
   const currentRows =
@@ -600,21 +1515,23 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
 
       if (table === 'lawyers') {
         const target = lawyers.find((x) => x.id === targetId);
-        await supabase.from('cases').update({ lawyer_id: targetId, lawyer_name: mergeFinalName || target?.name || null }).in('lawyer_id', sourceIds);
         await supabase.from('saved_lawyers').update({ lawyer_id: targetId }).in('lawyer_id', sourceIds);
         await supabase.from('consultation_requests').update({ lawyer_id: targetId }).in('lawyer_id', sourceIds);
         await supabase.from('card_claims').update({ lawyer_id: targetId }).in('lawyer_id', sourceIds);
         await supabase.from('card_claims').update({ reviewed_by: targetId }).in('reviewed_by', sourceIds);
         await supabase.from('case_claims').update({ lawyer_id: targetId }).in('lawyer_id', sourceIds);
         await supabase.from('case_claims').update({ reviewed_by: targetId }).in('reviewed_by', sourceIds);
+          await supabase.from('lawyer_judge_analytics').delete().in('lawyer_id', sourceIds);
+          await supabase.from('lawyer_analytics').delete().in('lawyer_id', sourceIds);
         await supabase.from('lawyers').update({ name: mergeFinalName || target?.name || null }).eq('id', targetId);
       } else if (table === 'judges') {
         const target = judges.find((x) => x.id === targetId);
-        await supabase.from('cases').update({ judge_id: targetId, judge_name: mergeFinalName || target?.name || null }).in('judge_id', sourceIds);
+          await supabase.from('lawyer_judge_analytics').delete().in('judge_id', sourceIds);
+          await supabase.from('judge_analytics').delete().in('judge_id', sourceIds);
         await supabase.from('judges').update({ name: mergeFinalName || target?.name || null }).eq('id', targetId);
       } else if (table === 'courts') {
         const target = courts.find((x) => x.id === targetId);
-        await supabase.from('cases').update({ court_id: targetId, court_name: mergeFinalName || target?.name || null }).in('court_id', sourceIds);
+          await supabase.from('court_analytics').delete().in('court_id', sourceIds);
         await supabase.from('courts').update({ name: mergeFinalName || target?.name || null }).eq('id', targetId);
       } else {
         const targetCase = cases.find((x) => x.id === targetId);
@@ -658,26 +1575,22 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     try {
       const supabase = getSupabase();
       if (mergeDialog.table === 'lawyers') {
-        const [casesC, savedC, reqC, cardClaimC, caseClaimC] = await Promise.all([
-          supabase.from('cases').select('id', { count: 'exact', head: true }).in('lawyer_id', sourceIds),
+        const [savedC, reqC, cardClaimC, caseClaimC] = await Promise.all([
           supabase.from('saved_lawyers').select('id', { count: 'exact', head: true }).in('lawyer_id', sourceIds),
           supabase.from('consultation_requests').select('id', { count: 'exact', head: true }).in('lawyer_id', sourceIds),
           supabase.from('card_claims').select('id', { count: 'exact', head: true }).in('lawyer_id', sourceIds),
           supabase.from('case_claims').select('id', { count: 'exact', head: true }).in('lawyer_id', sourceIds),
         ]);
         setMergePreview({
-          cases: casesC.count || 0,
           saved_lawyers: savedC.count || 0,
           consultation_requests: reqC.count || 0,
           card_claims: cardClaimC.count || 0,
           case_claims: caseClaimC.count || 0,
         });
       } else if (mergeDialog.table === 'judges') {
-        const { count } = await supabase.from('cases').select('id', { count: 'exact', head: true }).in('judge_id', sourceIds);
-        setMergePreview({ cases: count || 0 });
+        setMergePreview({});
       } else if (mergeDialog.table === 'courts') {
-        const { count } = await supabase.from('cases').select('id', { count: 'exact', head: true }).in('court_id', sourceIds);
-        setMergePreview({ cases: count || 0 });
+        setMergePreview({});
       } else {
         const { count } = await supabase.from('case_claims').select('id', { count: 'exact', head: true }).in('case_id', sourceIds);
         setMergePreview({ case_claims: count || 0 });

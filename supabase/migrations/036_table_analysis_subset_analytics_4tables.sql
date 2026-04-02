@@ -1,20 +1,16 @@
--- 026_batch_analytics_recalculation_wide.sql
--- Batched analytics recalculation for the "wide" master cases table:
--- - judge_1..judge_9
--- - petitioner_lawyer_1..5
--- - respondent_lawyer_1..5
--- Rules:
--- - Do NOT count cases with no explicit outcome.
--- - If outcome favors complainant, all petitioner lawyers get win; respondent lawyers get loss.
--- - If outcome favors respondent, all respondent lawyers get win; petitioner lawyers get loss.
--- - Settled adds settled to all listed lawyers.
--- - Duration = judgment_date - filing_date only when both exist; otherwise skipped for duration calc.
+-- 036_table_analysis_subset_analytics_4tables.sql
+-- Dedicated "Table Analysis" RPC for the worker queue.
+-- It ONLY (re)calculates the 4 wide analytics tables:
+-- - public.lawyer_analytics
+-- - public.judge_analytics
+-- - public.court_analytics
+-- - public.lawyer_judge_analytics
+-- and ONLY for the provided case_numbers subset.
 
 BEGIN;
 
-CREATE OR REPLACE FUNCTION public.admin_recalculate_analytics_batch_wide(
-  p_batch_size integer DEFAULT 500,
-  p_offset integer DEFAULT 0,
+CREATE OR REPLACE FUNCTION public.admin_recalculate_analytics_for_case_numbers_wide(
+  p_case_numbers text[],
   p_reset boolean DEFAULT false
 )
 RETURNS jsonb
@@ -22,28 +18,28 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  v_batch_size integer := GREATEST(1, LEAST(COALESCE(p_batch_size, 500), 2000));
-  v_offset integer := GREATEST(COALESCE(p_offset, 0), 0);
   v_processed integer := 0;
-  v_has_more boolean := false;
 BEGIN
   IF NOT public.is_admin_user() THEN
     RAISE EXCEPTION 'Admin access required';
   END IF;
 
-  -- Try to prevent "canceling statement due to statement timeout" during heavy batches.
-  -- Note: your Supabase project may still enforce an upper bound, but this helps a lot.
-  PERFORM set_config('statement_timeout', '600000', true); -- 10 minutes (local to this transaction)
+  PERFORM set_config('statement_timeout', '600000', true); -- 10 minutes (local)
+
+  IF p_case_numbers IS NULL OR array_length(p_case_numbers, 1) IS NULL OR array_length(p_case_numbers, 1) = 0 THEN
+    RETURN jsonb_build_object('ok', true, 'processed', 0);
+  END IF;
 
   IF p_reset THEN
+    -- Full reset is destructive. Table Analysis is designed for incremental adds by default.
     TRUNCATE TABLE public.lawyer_analytics;
     TRUNCATE TABLE public.judge_analytics;
     TRUNCATE TABLE public.court_analytics;
     TRUNCATE TABLE public.lawyer_judge_analytics;
   END IF;
 
-  -- Materialize the batch once to avoid re-scanning/sorting `public.cases` multiple times per batch.
-  CREATE TEMP TABLE IF NOT EXISTS tmp_batch_cases (
+  -- Materialize only the requested cases once (avoid rescans).
+  CREATE TEMP TABLE tmp_batch_cases (
     case_id uuid,
     case_number text,
     court_id uuid,
@@ -51,12 +47,11 @@ BEGIN
     status text,
     norm_outcome text,
     duration_days numeric,
-    judge_1 text, judge_2 text, judge_3 text, judge_4 text, judge_5 text, judge_6 text, judge_7 text, judge_8 text, judge_9 text,
+    judge_1 text, judge_2 text, judge_3 text, judge_4 text, judge_5 text,
+    judge_6 text, judge_7 text, judge_8 text, judge_9 text,
     petitioner_lawyer_1 text, petitioner_lawyer_2 text, petitioner_lawyer_3 text, petitioner_lawyer_4 text, petitioner_lawyer_5 text,
     respondent_lawyer_1 text, respondent_lawyer_2 text, respondent_lawyer_3 text, respondent_lawyer_4 text, respondent_lawyer_5 text
   ) ON COMMIT DROP;
-
-  TRUNCATE TABLE tmp_batch_cases;
 
   INSERT INTO tmp_batch_cases
   SELECT
@@ -71,7 +66,6 @@ BEGIN
     x.petitioner_lawyer_1, x.petitioner_lawyer_2, x.petitioner_lawyer_3, x.petitioner_lawyer_4, x.petitioner_lawyer_5,
     x.respondent_lawyer_1, x.respondent_lawyer_2, x.respondent_lawyer_3, x.respondent_lawyer_4, x.respondent_lawyer_5
   FROM (
-    -- Dedupe within the batch by case_number to prevent double counting if duplicates exist.
     SELECT DISTINCT ON (c.case_number)
       c.id AS case_id,
       c.case_number,
@@ -90,16 +84,21 @@ BEGIN
       c.updated_at,
       c.created_at
     FROM public.cases c
-    WHERE c.case_number IS NOT NULL AND btrim(c.case_number) <> ''
-    ORDER BY c.case_number, c.updated_at DESC NULLS LAST, c.created_at DESC NULLS LAST, c.id DESC
-    LIMIT v_batch_size OFFSET v_offset
+    WHERE c.case_number IS NOT NULL
+      AND btrim(c.case_number) <> ''
+      AND c.case_number = ANY(p_case_numbers)
+    ORDER BY
+      c.case_number,
+      c.updated_at DESC NULLS LAST,
+      c.created_at DESC NULLS LAST,
+      c.id DESC
   ) x;
 
   SELECT COUNT(*)::int INTO v_processed FROM tmp_batch_cases;
 
-  -- =====================================================
-  -- LAWYER ANALYTICS (award to all lawyers on each side)
-  -- =====================================================
+  -- ===========================
+  -- 1) LAWYER ANALYTICS
+  -- ===========================
   WITH batch_cases AS (
     SELECT
       case_id,
@@ -129,24 +128,26 @@ BEGIN
       bc.norm_outcome,
       bc.duration_days,
       'Petitioner'::text AS side,
-      unnest(CASE
-        WHEN array_remove(bc.petitioner_lawyers, NULL) <> '{}'::text[] THEN array_remove(bc.petitioner_lawyers, NULL)
-        ELSE ARRAY['Complainant without a lawyer']::text[]
-      END) AS lawyer_name
+      unnest(
+        CASE
+          WHEN array_remove(bc.petitioner_lawyers, NULL) <> '{}'::text[] THEN array_remove(bc.petitioner_lawyers, NULL)
+          ELSE ARRAY['Complainant without a lawyer']::text[]
+        END
+      ) AS lawyer_name
     FROM batch_cases bc
-
     UNION ALL
-
     SELECT
       bc.case_id,
       bc.status,
       bc.norm_outcome,
       bc.duration_days,
       'Respondent'::text AS side,
-      unnest(CASE
-        WHEN array_remove(bc.respondent_lawyers, NULL) <> '{}'::text[] THEN array_remove(bc.respondent_lawyers, NULL)
-        ELSE ARRAY['Respondent without a Lawyer']::text[]
-      END) AS lawyer_name
+      unnest(
+        CASE
+          WHEN array_remove(bc.respondent_lawyers, NULL) <> '{}'::text[] THEN array_remove(bc.respondent_lawyers, NULL)
+          ELSE ARRAY['Respondent without a Lawyer']::text[]
+        END
+      ) AS lawyer_name
     FROM batch_cases bc
   ),
   mapped AS (
@@ -270,9 +271,9 @@ BEGIN
     END,
     updated_at = now();
 
-  -- =====================================================
-  -- JUDGE ANALYTICS (award to all listed judges)
-  -- =====================================================
+  -- ===========================
+  -- 2) JUDGE ANALYTICS
+  -- ===========================
   WITH batch_cases AS (
     SELECT
       status,
@@ -296,10 +297,12 @@ BEGIN
       bc.status,
       bc.norm_outcome,
       bc.duration_days,
-      unnest(CASE
-        WHEN array_remove(bc.judges, NULL) <> '{}'::text[] THEN array_remove(bc.judges, NULL)
-        ELSE ARRAY['Unknown Judge']::text[]
-      END) AS judge_name
+      unnest(
+        CASE
+          WHEN array_remove(bc.judges, NULL) <> '{}'::text[] THEN array_remove(bc.judges, NULL)
+          ELSE ARRAY['Unknown Judge']::text[]
+        END
+      ) AS judge_name
     FROM batch_cases bc
   ),
   mapped AS (
@@ -416,9 +419,9 @@ BEGIN
     END,
     updated_at = now();
 
-  -- =====================================================
-  -- COURT ANALYTICS (one per case)
-  -- =====================================================
+  -- ===========================
+  -- 3) COURT ANALYTICS
+  -- ===========================
   WITH batch_cases AS (
     SELECT
       court_id,
@@ -514,9 +517,9 @@ BEGIN
     END,
     updated_at = now();
 
-  -- =====================================================
-  -- LAWYER vs JUDGE ANALYTICS (all lawyers x all judges for the case)
-  -- =====================================================
+  -- ===========================
+  -- 4) LAWYER vs JUDGE ANALYTICS
+  -- ===========================
   WITH batch_cases AS (
     SELECT
       status,
@@ -555,24 +558,26 @@ BEGIN
       bc.norm_outcome,
       bc.duration_days,
       'Petitioner'::text AS side,
-      unnest(CASE
-        WHEN array_remove(bc.petitioner_lawyers, NULL) <> '{}'::text[] THEN array_remove(bc.petitioner_lawyers, NULL)
-        ELSE ARRAY['Complainant without a lawyer']::text[]
-      END) AS lawyer_name,
+      unnest(
+        CASE
+          WHEN array_remove(bc.petitioner_lawyers, NULL) <> '{}'::text[] THEN array_remove(bc.petitioner_lawyers, NULL)
+          ELSE ARRAY['Complainant without a lawyer']::text[]
+        END
+      ) AS lawyer_name,
       bc.judges
     FROM batch_cases bc
-
     UNION ALL
-
     SELECT
       bc.status,
       bc.norm_outcome,
       bc.duration_days,
       'Respondent'::text AS side,
-      unnest(CASE
-        WHEN array_remove(bc.respondent_lawyers, NULL) <> '{}'::text[] THEN array_remove(bc.respondent_lawyers, NULL)
-        ELSE ARRAY['Respondent without a Lawyer']::text[]
-      END) AS lawyer_name,
+      unnest(
+        CASE
+          WHEN array_remove(bc.respondent_lawyers, NULL) <> '{}'::text[] THEN array_remove(bc.respondent_lawyers, NULL)
+          ELSE ARRAY['Respondent without a Lawyer']::text[]
+        END
+      ) AS lawyer_name,
       bc.judges
     FROM batch_cases bc
   ),
@@ -583,10 +588,12 @@ BEGIN
       lr.duration_days,
       lr.side,
       lr.lawyer_name,
-      unnest(CASE
-        WHEN array_remove(lr.judges, NULL) <> '{}'::text[] THEN array_remove(lr.judges, NULL)
-        ELSE ARRAY['Unknown Judge']::text[]
-      END) AS judge_name
+      unnest(
+        CASE
+          WHEN array_remove(lr.judges, NULL) <> '{}'::text[] THEN array_remove(lr.judges, NULL)
+          ELSE ARRAY['Unknown Judge']::text[]
+        END
+      ) AS judge_name
     FROM lawyer_rows lr
   ),
   mapped AS (
@@ -689,23 +696,29 @@ BEGIN
     END,
     updated_at = now();
 
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.cases c
-    ORDER BY c.updated_at DESC NULLS LAST, c.created_at DESC NULLS LAST
-    LIMIT 1 OFFSET (v_offset + v_batch_size)
-  ) INTO v_has_more;
-
-  RETURN jsonb_build_object(
-    'ok', true,
-    'processed', v_processed,
-    'has_more', v_has_more,
-    'next_offset', v_offset + v_batch_size
-  );
+  RETURN jsonb_build_object('ok', true, 'processed', v_processed);
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.admin_recalculate_analytics_batch_wide(integer, integer, boolean) TO authenticated;
+REVOKE ALL ON FUNCTION public.admin_recalculate_analytics_for_case_numbers_wide(text[], boolean) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.admin_recalculate_analytics_for_case_numbers_wide(text[], boolean) TO authenticated;
+
+-- Orchestrator for Table Analysis: only the 4 tables; no ranks, no full rebuilds.
+CREATE OR REPLACE FUNCTION public.admin_run_table_analysis_wide(p_case_numbers text[])
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_result jsonb;
+BEGIN
+  v_result := public.admin_recalculate_analytics_for_case_numbers_wide(p_case_numbers, false);
+  RETURN jsonb_build_object('status', 'ok', 'analytics_4tables', v_result);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.admin_run_table_analysis_wide(text[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.admin_run_table_analysis_wide(text[]) TO authenticated;
 
 COMMIT;
 
