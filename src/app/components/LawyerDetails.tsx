@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import getSupabase from "../../utils/supabase/client";
 import TrustRiskMatrix from "./TrustRiskMatrix";
 import AnalyticsDashboard from "./AnalyticsDashboard";
+import { buildLawyerDashboardCharts, LAWYER_ANALYTICS_CHART_SELECT } from "../utils/lawyer-analytics-charts";
 
 interface Props {
   lawyerId: string;
@@ -44,45 +45,61 @@ type LawyerAnalyticsRow = {
   loss_rate: number;
   settlement_rate: number;
   avg_case_duration_days: number;
-};
+} & Record<string, unknown>;
 
 type CaseRow = {
   case_number: string;
-  case_type: string | null;
-  court_name: string | null;
-  filing_date: string | null;
-  judgment_date: string | null;
+  case_title: string | null;
+  judge_name: string | null;
+  opponent_lawyer: string | null;
   outcome: string | null;
 };
+
+const CORE_LAWYER_ANALYTICS_SELECT = [
+  "lawyer_id",
+  "lawyer_name",
+  "total_cases",
+  "won_cases",
+  "lost_cases",
+  "settled_cases",
+  "dismissed_cases",
+  "withdrawn_cases",
+  "partially_granted_cases",
+  "win_rate",
+  "loss_rate",
+  "settlement_rate",
+  "avg_case_duration_days",
+].join(",");
 
 export default function LawyerDetails({ lawyerId, onBack }: Props) {
   const [loading, setLoading] = useState(true);
   const [lawyer, setLawyer] = useState<LawyerRow | null>(null);
   const [judgePerformance, setJudgePerformance] = useState<LawyerJudgeAnalyticsRow[]>([]);
   const [analytics, setAnalytics] = useState<LawyerAnalyticsRow | null>(null);
-  const [opponentLawyers, setOpponentLawyers] = useState<Array<{ name: string; cases: number; won: number; lost: number; settled: number }>>([]);
-  const [topJudges, setTopJudges] = useState<Array<{ name: string; cases: number; won: number; lost: number; settled: number }>>([]);
   const [clientRepresentationData, setClientRepresentationData] = useState<Array<{ name: string; value: number; fill: string }>>([
-    { name: "Homebuyers", value: 0, fill: "#166534" },
-    { name: "Builders", value: 0, fill: "#475569" },
+    { name: "Complainant side (cases)", value: 0, fill: "#166534" },
+    { name: "Respondent side (cases)", value: 0, fill: "#475569" },
   ]);
   const [caseTable, setCaseTable] = useState<CaseRow[]>([]);
+  const [visibleCaseCount, setVisibleCaseCount] = useState(20);
   const [aiPromoterText, setAiPromoterText] = useState<string>(
-    "Portfolio split unavailable due to limited side-tagged records."
+    "Portfolio split unavailable until chart columns are refreshed (run master or table analysis)."
   );
   const [benchTrackRecordText, setBenchTrackRecordText] = useState<string>(
     "Bench track record unavailable due to insufficient judge-level history."
   );
   const [verifiedDataText, setVerifiedDataText] = useState<string>(
-    "Data source: Master cases table and computed analytics."
+    "Data source: lawyer_analytics and lawyer_judge_analytics."
   );
   const [hearingRiskText, setHearingRiskText] = useState<string>(
-    "Hearing intensity unavailable due to missing hearing-count data."
+    "Hearing intensity derived from precomputed hearing buckets in lawyer_analytics."
   );
   const [hearingVelocityData, setHearingVelocityData] = useState<Array<{ bucket: string; cases: number }>>([]);
-  const [topOpponentsData, setTopOpponentsData] = useState<Array<{ name: string; cases: number; winRate: number }>>([]);
-  const [reraResolutionData, setReraResolutionData] = useState<
-    Array<{ year: string; refund: number; possession: number; conciliation: number; dismissed: number }>
+  const [topOpponentsData, setTopOpponentsData] = useState<Array<{ name: string; cases: number; winRate: number; lossRate: number; settlementRate: number }>>([]);
+  const [topOpponentLawyersCases, setTopOpponentLawyersCases] = useState<Array<{ name: string; cases: number; winRate: number; lossRate: number; settlementRate: number }>>([]);
+  const [topJudgesCases, setTopJudgesCases] = useState<Array<{ name: string; cases: number; winRate: number; lossRate: number; settlementRate: number }>>([]);
+  const [settlementRatesData, setSettlementRatesData] = useState<
+    Array<{ label: string; pct: number; n: number; kind?: string | null }>
   >([]);
 
   const isAutoImportEmail = (email: string | null) => {
@@ -106,11 +123,35 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
     side: "Complainant" | "Respondent"
   ) => `${String(courtName ?? "").trim() || "Unknown Court"} ${side} without a lawyer`;
 
+  const firstNonEmpty = (values: Array<string | null | undefined>) => {
+    for (const value of values) {
+      const v = String(value ?? "").trim();
+      if (v) return v;
+    }
+    return null;
+  };
+
+  const uniqueNonEmpty = (values: Array<string | null | undefined>) => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const value of values) {
+      const v = String(value ?? "").trim();
+      if (!v) continue;
+      const key = normalizePersonName(v);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(v);
+    }
+    return out;
+  };
+
   useEffect(() => {
     let mounted = true;
+    setVisibleCaseCount(20);
     (async () => {
       try {
         const supabase = getSupabase();
+        const analyticsSelect = `${CORE_LAWYER_ANALYTICS_SELECT},${LAWYER_ANALYTICS_CHART_SELECT}`;
         const [lawyerRes, judgePerfRes, analyticsRes] = await Promise.all([
           supabase
             .from("lawyers")
@@ -123,274 +164,149 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
             .eq("lawyer_id", lawyerId)
             .order("total_cases", { ascending: false })
             .limit(10),
-          supabase
-            .from("lawyer_analytics")
-            .select("lawyer_id,lawyer_name,total_cases,won_cases,lost_cases,settled_cases,dismissed_cases,withdrawn_cases,partially_granted_cases,win_rate,loss_rate,settlement_rate,avg_case_duration_days")
-            .eq("lawyer_id", lawyerId)
-            .maybeSingle(),
+          supabase.from("lawyer_analytics").select(analyticsSelect).eq("lawyer_id", lawyerId).maybeSingle(),
         ]);
         if (mounted) setLawyer((lawyerRes.data as LawyerRow | null) ?? null);
-        if (mounted) setJudgePerformance((judgePerfRes.data ?? []) as LawyerJudgeAnalyticsRow[]);
+        const judgePerfRows = (judgePerfRes.data ?? []) as LawyerJudgeAnalyticsRow[];
+        if (mounted) setJudgePerformance(judgePerfRows);
 
         let a = (analyticsRes.data as LawyerAnalyticsRow | null) ?? null;
-        // Fallback: if analytics row is missing (common after merges/resets), try matching by lawyer_name.
         if (!a) {
           const lawyerName = ((lawyerRes.data as LawyerRow | null)?.name ?? "").trim();
           if (lawyerName) {
-            const { data: byName } = await supabase
-              .from("lawyer_analytics")
-              .select("lawyer_id,lawyer_name,total_cases,won_cases,lost_cases,settled_cases,dismissed_cases,withdrawn_cases,partially_granted_cases,win_rate,loss_rate,settlement_rate,avg_case_duration_days")
-              .ilike("lawyer_name", lawyerName)
-              .maybeSingle();
+            const { data: byName } = await supabase.from("lawyer_analytics").select(analyticsSelect).ilike("lawyer_name", lawyerName).maybeSingle();
             a = (byName as LawyerAnalyticsRow | null) ?? null;
           }
         }
         if (mounted) setAnalytics(a);
 
-        // Build opponent datasets from master `cases` (client-side, pilot-safe volume).
+        const charts = buildLawyerDashboardCharts(a ?? undefined);
+        if (mounted) {
+          setClientRepresentationData(charts.clientRepresentationData);
+          setHearingVelocityData(charts.hearingVelocityData);
+          setTopOpponentsData(charts.topOpponentsData);
+          setTopOpponentLawyersCases(charts.topOpponentLawyersCases);
+          setTopJudgesCases(charts.topJudgesCases);
+          setSettlementRatesData(charts.settlementRatesData);
+
+          const rc = charts.clientRepresentationData[0]?.value ?? 0;
+          const rr = charts.clientRepresentationData[1]?.value ?? 0;
+          const totalTagged = rc + rr;
+          const complainantPct = totalTagged > 0 ? Math.round((rc * 100) / totalTagged) : 0;
+          setAiPromoterText(
+            totalTagged > 0
+              ? `Portfolio split: ${complainantPct}% of side-tagged appearances on the complainant (petitioner) side (${rc} cases) versus ${100 - complainantPct}% on the respondent side (${rr} cases).`
+              : "Portfolio split unavailable until chart columns are populated (admin refresh)."
+          );
+
+          const topJudge = judgePerfRows[0];
+          if (topJudge && (topJudge.total_cases ?? 0) > 0) {
+            const judgeWinRate = Math.round(((topJudge.won_cases ?? 0) * 1000) / Math.max(1, topJudge.total_cases)) / 10;
+            setBenchTrackRecordText(
+              `Bench Track Record: ${judgeWinRate}% wins (${topJudge.won_cases}/${topJudge.total_cases} cases) before ${topJudge.judge_name}.`
+            );
+          } else {
+            setBenchTrackRecordText("Bench track record unavailable due to insufficient judge-level history.");
+          }
+
+          setVerifiedDataText(
+            `Data source: ${a?.total_cases ?? 0} cases aggregated in lawyer_analytics; charts use precomputed chart_* columns.`
+          );
+
+          const bh =
+            charts.hearingVelocityData.reduce((s, r) => s + (r.cases ?? 0), 0);
+          if (bh > 0) {
+            setHearingRiskText(
+              `Hearing buckets: ${charts.hearingVelocityData.map((r) => `${r.bucket}: ${r.cases}`).join(", ")} matters with hearing counts.`
+            );
+          } else {
+            setHearingRiskText("No hearing-bucket data in analytics (missing total_hearings on matched cases).");
+          }
+        }
+
         const lawyerName = (((lawyerRes.data as LawyerRow | null)?.name ?? "") as string).trim();
         if (lawyerName) {
-          const normalizeOutcome = (outcome: string | null, status: string | null) => {
-            const s = `${outcome ?? ""} ${status ?? ""}`.toLowerCase();
-            if (!s.trim()) return null;
-            if (s.includes("settled") || s.includes("conciliation")) return "settled" as const;
-            if (s.includes("in favor of complainant") || s.includes("in favour of complainant") || s.includes("in favor of petitioner")) return "petitioner" as const;
-            if (s.includes("in favor of respondent") || s.includes("in favour of respondent")) return "respondent" as const;
-            return null;
-          };
-
-          const selectCols =
-            "case_number,case_type,court_name,filing_date,judgment_date,outcome,status," +
-            "petitioner_name,respondent_name,total_hearings," +
-            "petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5," +
-            "respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5," +
-            "judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9";
+          const selectCols = [
+            "case_number",
+            "case_title",
+            "court_name",
+            "outcome",
+            "judge_1","judge_2","judge_3","judge_4","judge_5","judge_6","judge_7","judge_8","judge_9",
+            "petitioner_lawyer_1","petitioner_lawyer_2","petitioner_lawyer_3","petitioner_lawyer_4","petitioner_lawyer_5",
+            "respondent_lawyer_1","respondent_lawyer_2","respondent_lawyer_3","respondent_lawyer_4","respondent_lawyer_5",
+            "updated_at",
+          ].join(",");
           const canonicalLawyerName = normalizePersonName(lawyerName);
-          const { data: allCaseRows } = await supabase
-            .from("cases")
-            .select(selectCols)
-            .limit(40000);
 
-          const caseRows = (allCaseRows ?? []).filter((r: any) => {
+          const allCaseRows: Record<string, unknown>[] = [];
+          const pageSize = 1000;
+          let from = 0;
+          while (true) {
+            const { data, error } = await supabase
+              .from("cases_analytics")
+              .select(selectCols)
+              .order("updated_at", { ascending: false })
+              .range(from, from + pageSize - 1);
+            if (error) throw error;
+            const chunk = (data ?? []) as Record<string, unknown>[];
+            allCaseRows.push(...chunk);
+            if (chunk.length < pageSize) break;
+            from += pageSize;
+          }
+
+          const tableRows = allCaseRows.flatMap((r) => {
             const pLawyers = [
               r.petitioner_lawyer_1,
               r.petitioner_lawyer_2,
               r.petitioner_lawyer_3,
               r.petitioner_lawyer_4,
               r.petitioner_lawyer_5,
-            ];
-            const rLawyers = [
+            ].filter(Boolean) as string[];
+            const resLawyers = [
               r.respondent_lawyer_1,
               r.respondent_lawyer_2,
               r.respondent_lawyer_3,
               r.respondent_lawyer_4,
               r.respondent_lawyer_5,
-            ];
-            const petitionerVirtualName = buildSelfRepresentedLawyerName(r.court_name, "Complainant");
-            const respondentVirtualName = buildSelfRepresentedLawyerName(r.court_name, "Respondent");
-            const hasPetitionerLawyer = pLawyers.some(Boolean);
-            const hasRespondentLawyer = rLawyers.some(Boolean);
-            return [...pLawyers, ...rLawyers].some(
-              (name) => normalizePersonName(name) === canonicalLawyerName
-            )
-              || (!hasPetitionerLawyer && normalizePersonName(petitionerVirtualName) === canonicalLawyerName)
-              || (!hasRespondentLawyer && normalizePersonName(respondentVirtualName) === canonicalLawyerName);
+            ].filter(Boolean) as string[];
+
+            const petitionerList = pLawyers.length > 0
+              ? pLawyers
+              : [buildSelfRepresentedLawyerName(r.court_name as string | null, "Complainant")];
+            const respondentList = resLawyers.length > 0
+              ? resLawyers
+              : [buildSelfRepresentedLawyerName(r.court_name as string | null, "Respondent")];
+
+            const appearsPetitioner = petitionerList.some((name) => normalizePersonName(name) === canonicalLawyerName);
+            const appearsRespondent = respondentList.some((name) => normalizePersonName(name) === canonicalLawyerName);
+            if (!appearsPetitioner && !appearsRespondent) return [];
+
+            const opponents = uniqueNonEmpty([
+              ...(appearsPetitioner ? respondentList : []),
+              ...(appearsRespondent ? petitionerList : []),
+            ]);
+
+            return [{
+              case_number: String(r.case_number ?? ""),
+              case_title: (r.case_title ?? null) as string | null,
+              judge_name: firstNonEmpty([
+                r.judge_1 as string | null,
+                r.judge_2 as string | null,
+                r.judge_3 as string | null,
+                r.judge_4 as string | null,
+                r.judge_5 as string | null,
+                r.judge_6 as string | null,
+                r.judge_7 as string | null,
+                r.judge_8 as string | null,
+                r.judge_9 as string | null,
+              ]),
+              opponent_lawyer: opponents.length > 0 ? opponents.join(", ") : null,
+              outcome: (r.outcome ?? null) as string | null,
+            } satisfies CaseRow];
           });
 
-          const oppMap = new Map<string, { name: string; cases: number; won: number; lost: number; settled: number }>();
-          const judgeMap = new Map<string, { name: string; cases: number; won: number; lost: number; settled: number }>();
-          const oppPartyMap = new Map<string, { name: string; cases: number; wins: number; losses: number }>();
-          let petitionerAppearances = 0;
-          let respondentAppearances = 0;
-          let hearingsSum = 0;
-          let hearingsCount = 0;
-
-          const hearingBuckets = new Map<string, number>([
-            ["1-5", 0],
-            ["6-10", 0],
-            ["11-15", 0],
-            ["16+", 0],
-          ]);
-
-          const resolutionYears = ["2024", "2025", "2026"];
-          const resolutionMap = new Map<
-            string,
-            { year: string; refund: number; possession: number; conciliation: number; dismissed: number }
-          >();
-          resolutionYears.forEach((y) => {
-            resolutionMap.set(y, { year: y, refund: 0, possession: 0, conciliation: 0, dismissed: 0 });
-          });
-
-          for (const r of (caseRows ?? []) as any[]) {
-            const pLawyers = [r.petitioner_lawyer_1, r.petitioner_lawyer_2, r.petitioner_lawyer_3, r.petitioner_lawyer_4, r.petitioner_lawyer_5].filter(Boolean);
-            const rLawyers = [r.respondent_lawyer_1, r.respondent_lawyer_2, r.respondent_lawyer_3, r.respondent_lawyer_4, r.respondent_lawyer_5].filter(Boolean);
-            const judges = [r.judge_1, r.judge_2, r.judge_3, r.judge_4, r.judge_5, r.judge_6, r.judge_7, r.judge_8, r.judge_9].filter(Boolean);
-
-            const petitionerVirtualName = buildSelfRepresentedLawyerName(r.court_name, "Complainant");
-            const respondentVirtualName = buildSelfRepresentedLawyerName(r.court_name, "Respondent");
-            const side: "petitioner" | "respondent" | null =
-              pLawyers.some((name) => normalizePersonName(name) === canonicalLawyerName)
-                || (!pLawyers.length && normalizePersonName(petitionerVirtualName) === canonicalLawyerName)
-                ? "petitioner"
-                : rLawyers.some((name) => normalizePersonName(name) === canonicalLawyerName)
-                    || (!rLawyers.length && normalizePersonName(respondentVirtualName) === canonicalLawyerName)
-                  ? "respondent"
-                  : null;
-            if (side === "petitioner") petitionerAppearances += 1;
-            if (side === "respondent") respondentAppearances += 1;
-
-            const norm = normalizeOutcome(r.outcome ?? null, r.status ?? null);
-            const isWin = norm === (side === "petitioner" ? "petitioner" : side === "respondent" ? "respondent" : "none");
-            const isLoss = norm && side && !isWin && norm !== "settled";
-            const isSettled = norm === "settled";
-
-            // Hearing velocity buckets (Tareekh anxiety)
-            const hearings = Number(r.total_hearings ?? 0);
-            if (side && hearings > 0) {
-              const bucket =
-                hearings <= 5 ? "1-5" : hearings <= 10 ? "6-10" : hearings <= 15 ? "11-15" : "16+";
-              hearingBuckets.set(bucket, (hearingBuckets.get(bucket) ?? 0) + 1);
-              hearingsSum += hearings;
-              hearingsCount += 1;
-            }
-
-            // Resolution matrix (Refund vs Possession vs Settled vs Dismissed) by judgment year
-            const statusLower = `${r.status ?? ""}`.toLowerCase();
-            const jdYear = r.judgment_date ? new Date(r.judgment_date).getFullYear() : null;
-            const yearKey = jdYear ? String(jdYear) : null;
-            if (yearKey && resolutionMap.has(yearKey)) {
-              if (norm === "petitioner") {
-                resolutionMap.get(yearKey)!.refund += 1;
-              } else if (norm === "respondent") {
-                resolutionMap.get(yearKey)!.possession += 1;
-              } else if (norm === "settled") {
-                resolutionMap.get(yearKey)!.conciliation += 1;
-              } else {
-                const looksDismissed = statusLower.includes("dismiss") || statusLower.includes("rejected") || statusLower.includes("complaint rejected");
-                if (looksDismissed) resolutionMap.get(yearKey)!.dismissed += 1;
-              }
-            }
-
-            // Top opponents (builder/respondent) + win rate for this lawyer vs that opponent
-            const oppPartyName =
-              side === "petitioner" ? String(r.respondent_name ?? "").trim() : side === "respondent" ? String(r.petitioner_name ?? "").trim() : "";
-            if (side && oppPartyName) {
-              const cur = oppPartyMap.get(oppPartyName) ?? { name: oppPartyName, cases: 0, wins: 0, losses: 0 };
-              cur.cases += 1;
-              if (isWin) cur.wins += 1;
-              else if (isLoss) cur.losses += 1;
-              oppPartyMap.set(oppPartyName, cur);
-            }
-
-            // Opponent lawyers
-            const opponents = side === "petitioner"
-              ? (rLawyers.length ? rLawyers : [buildSelfRepresentedLawyerName(r.court_name, "Respondent")])
-              : side === "respondent"
-                ? (pLawyers.length ? pLawyers : [buildSelfRepresentedLawyerName(r.court_name, "Complainant")])
-                : [];
-            for (const o of opponents) {
-              const name = String(o).trim();
-              if (!name) continue;
-              const cur = oppMap.get(name) ?? { name, cases: 0, won: 0, lost: 0, settled: 0 };
-              cur.cases += 1;
-              if (isSettled) cur.settled += 1;
-              else if (isWin) cur.won += 1;
-              else if (isLoss) cur.lost += 1;
-              oppMap.set(name, cur);
-            }
-
-            // Judges
-            for (const j of judges) {
-              const name = String(j).trim();
-              if (!name) continue;
-              const cur = judgeMap.get(name) ?? { name, cases: 0, won: 0, lost: 0, settled: 0 };
-              cur.cases += 1;
-              if (isSettled) cur.settled += 1;
-              else if (isWin) cur.won += 1;
-              else if (isLoss) cur.lost += 1;
-              judgeMap.set(name, cur);
-            }
-          }
-
-          const topOpp = Array.from(oppMap.values()).sort((a, b) => b.cases - a.cases).slice(0, 5);
-          const topJ = Array.from(judgeMap.values()).sort((a, b) => b.cases - a.cases).slice(0, 5);
-          const hearingRows = ["1-5", "6-10", "11-15", "16+"].map((b) => ({ bucket: b, cases: hearingBuckets.get(b) ?? 0 }));
-          const matrixRows = resolutionYears.map((y) => resolutionMap.get(y) ?? { year: y, refund: 0, possession: 0, conciliation: 0, dismissed: 0 });
-          const partyRows = Array.from(oppPartyMap.values())
-            .map((x) => {
-              const denom = x.wins + x.losses;
-              const winRate = denom > 0 ? (x.wins * 100) / denom : 0;
-              return { name: x.name, cases: x.cases, winRate: Math.round(winRate * 10) / 10 };
-            })
-            .sort((a, b) => b.cases - a.cases)
-            .slice(0, 5);
-          const tableRows = (caseRows ?? []).map((r: any) => ({
-            case_number: r.case_number,
-            case_type: r.case_type ?? null,
-            court_name: r.court_name ?? null,
-            filing_date: r.filing_date ?? null,
-            judgment_date: r.judgment_date ?? null,
-            outcome: r.outcome ?? null,
-          }));
-          const totalTagged = petitionerAppearances + respondentAppearances;
-          const homebuyerPct = totalTagged > 0 ? Math.round((petitionerAppearances * 100) / totalTagged) : 0;
-          const builderPct = totalTagged > 0 ? Math.round((respondentAppearances * 100) / totalTagged) : 0;
-
-          if (mounted) setOpponentLawyers(topOpp);
-          if (mounted) setTopJudges(topJ);
-          if (mounted) setHearingVelocityData(hearingRows);
-          if (mounted) setReraResolutionData(matrixRows);
-          if (mounted) setTopOpponentsData(partyRows);
-          if (mounted) setCaseTable(tableRows.slice(0, 300));
-          if (mounted) {
-            const topJudge = topJ[0];
-            if (topJudge && (topJudge.cases ?? 0) > 0) {
-              const judgeWinRate = Math.round((topJudge.won * 1000) / Math.max(1, topJudge.cases)) / 10;
-              setBenchTrackRecordText(
-                `Bench Track Record: ${judgeWinRate}% wins (${topJudge.won}/${topJudge.cases} cases) before ${topJudge.name}.`
-              );
-            } else {
-              setBenchTrackRecordText("Bench track record unavailable due to insufficient judge-level history.");
-            }
-
-            setVerifiedDataText(
-              `Data source: ${analytics?.total_cases ?? 0} analyzed cases from master records and analytics tables.`
-            );
-
-            if (hearingsCount > 0) {
-              const avgHearings = Math.round((hearingsSum / hearingsCount) * 10) / 10;
-              setHearingRiskText(
-                `Hearing Intensity: Average ${avgHearings} hearings per case across ${hearingsCount} tracked matters.`
-              );
-            } else {
-              setHearingRiskText("Hearing intensity unavailable due to missing hearing-count data.");
-            }
-
-            setClientRepresentationData([
-              { name: "Homebuyers", value: homebuyerPct, fill: "#166534" },
-              { name: "Builders", value: builderPct, fill: "#475569" },
-            ]);
-            setAiPromoterText(
-              `Portfolio split: ${builderPct}% appearances defending builders/promoters versus ${homebuyerPct}% representing homebuyers.`
-            );
-          }
-        } else {
-          if (mounted) setOpponentLawyers([]);
-          if (mounted) setTopJudges([]);
-        if (mounted) setHearingVelocityData([]);
-        if (mounted) setReraResolutionData([]);
-        if (mounted) setTopOpponentsData([]);
-          if (mounted) {
-          setBenchTrackRecordText("Bench track record unavailable due to insufficient judge-level history.");
-          setVerifiedDataText("Data source: Master cases table and computed analytics.");
-          setHearingRiskText("Hearing intensity unavailable due to missing hearing-count data.");
-            setClientRepresentationData([
-              { name: "Homebuyers", value: 0, fill: "#166534" },
-              { name: "Builders", value: 0, fill: "#475569" },
-            ]);
-            setAiPromoterText("Portfolio split unavailable due to limited side-tagged records.");
-          }
-        }
+          if (mounted) setCaseTable(tableRows);
+        } else if (mounted) setCaseTable([]);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -441,7 +357,8 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
                         const base = w + l + s;
                         const pct = base > 0 ? (w * 100) / base : 0;
                         return pct.toFixed(1);
-                      })()}%
+                      })()}
+                      %
                     </div>
                   </div>
                   <div className="rounded-sm border border-[#dc2626]/20 bg-gradient-to-br from-[#fef2f2] to-[#fee2e2] p-3 text-slate-800">
@@ -454,7 +371,8 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
                         const base = w + l + s;
                         const pct = base > 0 ? (l * 100) / base : 0;
                         return pct.toFixed(1);
-                      })()}%
+                      })()}
+                      %
                     </div>
                   </div>
                   <div className="rounded-sm border border-[#d97706]/20 bg-gradient-to-br from-[#fef3c7] to-[#fde68a] p-3 text-slate-800">
@@ -467,7 +385,8 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
                         const base = w + l + s;
                         const pct = base > 0 ? (s * 100) / base : 0;
                         return pct.toFixed(1);
-                      })()}%
+                      })()}
+                      %
                     </div>
                   </div>
                   <div className="rounded-sm border border-[#e0e3e7] bg-[#f0f2f5] p-3 text-slate-800">
@@ -489,17 +408,15 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
 
           {/* Below top segment: full-width content */}
           <div>
-            <h2 className="font-serif text-2xl text-slate-900 border-b border-slate-200 pb-2 mb-6">
-              Historical Case Analytics
-            </h2>
+            <h2 className="font-serif text-2xl text-slate-900 border-b border-slate-200 pb-2 mb-6">Historical Case Analytics</h2>
             <AnalyticsDashboard
               caseBase={analytics?.total_cases ?? 0}
-              topOpponentLawyers={opponentLawyers}
-              topJudges={topJudges}
               clientRepresentationData={clientRepresentationData}
                 hearingVelocityData={hearingVelocityData}
                 topOpponentsData={topOpponentsData}
-                reraResolutionData={reraResolutionData}
+              topOpponentLawyersCases={topOpponentLawyersCases}
+              topJudgesCases={topJudgesCases}
+              settlementRatesData={settlementRatesData}
             />
           </div>
 
@@ -507,38 +424,36 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
         <div className="mt-10">
           <div className="bg-[#1a2332] text-white rounded-t-xl px-4 py-3 font-semibold">DETAILED CASE RECORDS</div>
           <div className="bg-white border border-[#e0e3e7] rounded-b-xl p-0 overflow-x-auto">
+            <div className="px-4 py-3 text-xs text-slate-600 border-b border-[#eef2f7]">
+              Source proof: complete list from cases_analytics matched by canonical lawyer-name mapping.
+            </div>
             <table className="min-w-full text-sm">
               <thead className="bg-[#f8fafc] text-[#1a2332]">
                 <tr>
-                  <th className="px-4 py-2 text-left">Case Number</th>
-                  <th className="px-4 py-2 text-left">Type</th>
-                  <th className="px-4 py-2 text-left">Court</th>
-                  <th className="px-4 py-2 text-left">Filing Date</th>
-                  <th className="px-4 py-2 text-left">Judgment Date</th>
+                  <th className="px-4 py-2 text-left">Case name</th>
+                  <th className="px-4 py-2 text-left">Judge</th>
+                  <th className="px-4 py-2 text-left">Opponent lawyer</th>
                   <th className="px-4 py-2 text-left">Outcome</th>
                 </tr>
               </thead>
               <tbody>
-                {caseTable.map((c) => {
-                  const o = (c.outcome ?? '').toLowerCase();
-                  const pill =
-                    o.includes('settled')
-                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                      : o.includes('in favor of complainant') || o.includes('complainant')
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      : o.includes('in favor of respondent') || o.includes('respondent')
-                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                      : 'bg-slate-50 text-slate-700 border border-slate-200';
+                {caseTable.slice(0, visibleCaseCount).map((c) => {
+                    const o = (c.outcome ?? "").toLowerCase();
+                    const pill = o.includes("settled")
+                      ? "bg-amber-50 text-amber-700 border border-amber-200"
+                      : o.includes("in favor of complainant") || o.includes("complainant")
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : o.includes("in favor of respondent") || o.includes("respondent")
+                          ? "bg-rose-50 text-rose-700 border border-rose-200"
+                          : "bg-slate-50 text-slate-700 border border-slate-200";
                   return (
                     <tr key={c.case_number} className="border-t border-[#eef2f7]">
-                      <td className="px-4 py-2">{c.case_number}</td>
-                      <td className="px-4 py-2">{c.case_type ?? '—'}</td>
-                      <td className="px-4 py-2">{c.court_name ?? '—'}</td>
-                      <td className="px-4 py-2">{c.filing_date ?? '—'}</td>
-                      <td className="px-4 py-2">{c.judgment_date ?? '—'}</td>
+                      <td className="px-4 py-2">{c.case_title?.trim() || c.case_number}</td>
+                      <td className="px-4 py-2">{c.judge_name ?? "—"}</td>
+                      <td className="px-4 py-2">{c.opponent_lawyer ?? "—"}</td>
                       <td className="px-4 py-2">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${pill}`}>
-                          {c.outcome ?? 'Pending'}
+                            {c.outcome ?? "Pending"}
                         </span>
                       </td>
                     </tr>
@@ -546,11 +461,23 @@ export default function LawyerDetails({ lawyerId, onBack }: Props) {
                 })}
                 {caseTable.length === 0 && (
                   <tr>
-                    <td className="px-4 py-4 text-[#5f6368]" colSpan={6}>No case records found for this lawyer.</td>
+                      <td className="px-4 py-4 text-[#5f6368]" colSpan={4}>
+                        No case records found for this lawyer.
+                      </td>
                   </tr>
                 )}
               </tbody>
             </table>
+            {caseTable.length > visibleCaseCount && (
+              <div className="p-4 border-t border-[#eef2f7]">
+                <button
+                  onClick={() => setVisibleCaseCount((v) => v + 20)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
+                >
+                  Show more
+                </button>
+              </div>
+            )}
           </div>
         </div>
         </div>

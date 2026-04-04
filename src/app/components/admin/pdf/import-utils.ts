@@ -26,6 +26,14 @@ function lawyersToWideColumns(prefix: "petitioner_lawyer_" | "respondent_lawyer_
   return out;
 }
 
+function judgesToWideColumns(names: string[]) {
+  const out: Record<string, string | null> = {};
+  for (let i = 0; i < 9; i += 1) {
+    out[`judge_${i + 1}`] = names[i] ?? null;
+  }
+  return out;
+}
+
 function normalizeDate(value: any) {
   if (typeof value !== "string") return value ?? null;
   const trimmed = value.trim();
@@ -60,6 +68,10 @@ export function buildImportPayloadFromExtractionRows(rows: ExtractionRow[]) {
       null;
     const petitioners = toStringArray(cleaned.petitioner_lawyers);
     const respondents = toStringArray(cleaned.respondent_lawyers);
+    let judges = toStringArray(cleaned.judges);
+    if (judges.length === 0 && cleaned.judge != null && String(stripTicks(cleaned.judge)).trim()) {
+      judges = [String(stripTicks(cleaned.judge)).trim()];
+    }
     const link = stripTicks(cleaned.judgement_link);
     const courtType = stripTicks(cleaned.court_type);
     const summaryParts = [
@@ -78,7 +90,7 @@ export function buildImportPayloadFromExtractionRows(rows: ExtractionRow[]) {
         stripTicks(cleaned.petitioner_name ?? cleaned.complainant ?? cleaned.parties?.petitioner) || null,
       respondent_name:
         stripTicks(cleaned.respondent_name ?? cleaned.respondent ?? cleaned.parties?.respondent) || null,
-      judge_1: stripTicks(cleaned.judge) || null,
+      ...judgesToWideColumns(judges.map((n) => stripTicks(n)).filter(Boolean) as string[]),
       ...lawyersToWideColumns("petitioner_lawyer_", petitioners),
       ...lawyersToWideColumns("respondent_lawyer_", respondents),
       filing_date: normalizeDate(stripTicks(cleaned.filing_date)),

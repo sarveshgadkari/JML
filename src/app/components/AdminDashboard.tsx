@@ -10,6 +10,10 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>('');
+  const [testLawyerName, setTestLawyerName] = useState('Abir Patel');
+  const [testDebugLog, setTestDebugLog] = useState<string>('');
+  const [masterScope, setMasterScope] = useState<'all' | 'lawyer' | 'judge' | 'court'>('all');
+  const [masterEntityId, setMasterEntityId] = useState<string>('');
   const [loadingTable, setLoadingTable] = useState(false);
   const [search, setSearch] = useState('');
   const [lawyers, setLawyers] = useState<any[]>([]);
@@ -626,92 +630,506 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     setMessage('');
     try {
       const supabase = getSupabase();
-      setMessage('Running master analysis across lawyer, judge, court, and lawyer-judge analytics...');
+      const stamp = () => new Date().toLocaleString();
+      const log = (line: string) => setTestDebugLog((prev) => `${prev ? `${prev}\n` : ''}[${stamp()}] ${line}`);
 
-      const [{ count: totalProcessed }, lawyerReset, judgeReset, courtReset, pairReset] = await Promise.all([
-        supabase.from('cases').select('id', { count: 'exact', head: true }),
-        supabase.from('lawyer_analytics').delete().not('lawyer_id', 'is', null),
-        supabase.from('judge_analytics').delete().not('judge_id', 'is', null),
-        supabase.from('court_analytics').delete().not('court_id', 'is', null),
-        supabase.from('lawyer_judge_analytics').delete().not('lawyer_id', 'is', null),
-      ]);
-      if (lawyerReset.error) throw lawyerReset.error;
-      if (judgeReset.error) throw judgeReset.error;
-      if (courtReset.error) throw courtReset.error;
-      if (pairReset.error) throw pairReset.error;
+      setTestDebugLog('');
 
-      const syncedEntities = await syncEntitiesFromCasesWide();
-      const { count: casesWithLawyersBeforeMerge } = await supabase
-        .from('cases')
-        .select('id', { count: 'exact', head: true })
-        .or([
-          'petitioner_lawyer_1.not.is.null',
-          'petitioner_lawyer_2.not.is.null',
-          'petitioner_lawyer_3.not.is.null',
-          'petitioner_lawyer_4.not.is.null',
-          'petitioner_lawyer_5.not.is.null',
-          'respondent_lawyer_1.not.is.null',
-          'respondent_lawyer_2.not.is.null',
-          'respondent_lawyer_3.not.is.null',
-          'respondent_lawyer_4.not.is.null',
-          'respondent_lawyer_5.not.is.null',
-        ].join(','));
-      setMessage('Merging duplicate lawyer and judge cards...');
-      const mergeCardsData = await bulkMergeDuplicateReferenceCards();
-      const { count: casesWithLawyersAfterMerge } = await supabase
-        .from('cases')
-        .select('id', { count: 'exact', head: true })
-        .or([
-          'petitioner_lawyer_1.not.is.null',
-          'petitioner_lawyer_2.not.is.null',
-          'petitioner_lawyer_3.not.is.null',
-          'petitioner_lawyer_4.not.is.null',
-          'petitioner_lawyer_5.not.is.null',
-          'respondent_lawyer_1.not.is.null',
-          'respondent_lawyer_2.not.is.null',
-          'respondent_lawyer_3.not.is.null',
-          'respondent_lawyer_4.not.is.null',
-          'respondent_lawyer_5.not.is.null',
-        ].join(','));
-      const rebuildCount = await rebuildLawyerAnalyticsClientWide();
-      const judgeRebuilt = await rebuildJudgeAnalyticsClientWide();
-      const courtRebuilt = await rebuildCourtAnalyticsClientWide();
-      const pairRebuilt = await rebuildLawyerJudgeAnalyticsClientWide();
+      if (masterScope === 'all') {
+        log('INFO: Running frontend-only master analysis for all scope.');
+        const entitySyncRes = await syncEntitiesFromCasesWide();
+        log(`RESULT: syncEntitiesFromCasesWide ${JSON.stringify(entitySyncRes, null, 2)}`);
 
-      setMessage('Computing tri-factor ranks in batches...');
-      const { count: triRankTotal } = await supabase
-        .from('lawyer_analytics')
-        .select('lawyer_id', { count: 'exact', head: true });
-      const triBatchSize = 200;
-      const triLoops = Math.ceil(Math.max(1, triRankTotal ?? 0) / triBatchSize);
-      let triFactorCount = 0;
-      for (let i = 0; i < triLoops; i += 1) {
-        setMessage(`Computing tri-factor ranks... batch ${i + 1} of ${triLoops}`);
-        const { data, error } = await (supabase as any).rpc('admin_compute_tri_ranks_batch', {
-          p_batch_size: triBatchSize,
-          p_offset: i * triBatchSize,
-        });
-        if (error) throw error;
-        triFactorCount += Number(data ?? 0);
+        const latestRows = await loadLatestCasesAnalyticsWide();
+        log(`RESULT: loadLatestCasesAnalyticsWide prepared ${latestRows.length} deduped case row(s).`);
+
+        const lawyerRows = await rebuildLawyerAnalyticsClientWide(latestRows);
+        log(`RESULT: rebuildLawyerAnalyticsClientWide rebuilt ${lawyerRows} row(s).`);
+
+        const judgeRows = await rebuildJudgeAnalyticsClientWide(latestRows);
+        log(`RESULT: rebuildJudgeAnalyticsClientWide rebuilt ${judgeRows} row(s).`);
+
+        const courtRows = await rebuildCourtAnalyticsClientWide(latestRows);
+        log(`RESULT: rebuildCourtAnalyticsClientWide rebuilt ${courtRows} row(s).`);
+
+        const lawyerJudgeRows = await rebuildLawyerJudgeAnalyticsClientWide(latestRows);
+        log(`RESULT: rebuildLawyerJudgeAnalyticsClientWide rebuilt ${lawyerJudgeRows} row(s).`);
+
+        const loadAllEntityIds = async (table: 'lawyers' | 'judges') => {
+          const ids: string[] = [];
+          const page = 1000;
+          let from = 0;
+          while (true) {
+            const { data, error } = await supabase
+              .from(table)
+              .select('id')
+              .order('id', { ascending: true })
+              .range(from, from + page - 1);
+            if (error) throw error;
+            const rows = (data ?? []) as Array<{ id?: string | null }>;
+            ids.push(...rows.map((r) => String(r?.id ?? '').trim()).filter(Boolean));
+            if (rows.length < page) break;
+            from += page;
+          }
+          return ids;
+        };
+
+        const allLawyerIds = await loadAllEntityIds('lawyers');
+        const allJudgeIds = await loadAllEntityIds('judges');
+
+        let chartLawyerRes = 0;
+        for (let i = 0; i < allLawyerIds.length; i += 1) {
+          const lawyerId = allLawyerIds[i];
+          setMessage(`Refreshing lawyer chart columns (frontend) ... ${i + 1}/${allLawyerIds.length}`);
+          try {
+            chartLawyerRes += await refreshLawyerChartsClientFallback(
+              lawyerId,
+              {
+                p_scope: 'entity_id',
+                p_case_numbers: null,
+                p_entity_type: 'lawyer',
+                p_entity_id: lawyerId,
+              },
+              log
+            );
+          } catch (chartErr: any) {
+            log(`WARN: lawyer chart refresh skipped for ${lawyerId}: ${String(chartErr?.message || chartErr || 'Unknown error')}`);
+          }
+        }
+
+        let chartJudgeRes = 0;
+        for (let i = 0; i < allJudgeIds.length; i += 1) {
+          const judgeId = allJudgeIds[i];
+          setMessage(`Refreshing judge chart columns (frontend) ... ${i + 1}/${allJudgeIds.length}`);
+          try {
+            chartJudgeRes += await refreshJudgeChartsClientFallback(
+              judgeId,
+              {
+                p_scope: 'entity_id',
+                p_case_numbers: null,
+                p_entity_type: 'judge',
+                p_entity_id: judgeId,
+              },
+              log
+            );
+          } catch (chartErr: any) {
+            log(`WARN: judge chart refresh skipped for ${judgeId}: ${String(chartErr?.message || chartErr || 'Unknown error')}`);
+          }
+        }
+
+        setMessage(
+          'Frontend master analysis complete. '
+          + `Entity sync added ${Number(entitySyncRes?.lawyers ?? 0)} lawyers / ${Number(entitySyncRes?.judges ?? 0)} judges / ${Number(entitySyncRes?.courts ?? 0)} courts, `
+          + `rebuild updated ${Number(lawyerRows ?? 0)} lawyer rows, ${Number(judgeRows ?? 0)} judge rows, ${Number(courtRows ?? 0)} court rows, ${Number(lawyerJudgeRows ?? 0)} lawyer-judge rows, `
+          + `chart columns refreshed for ${Number(chartLawyerRes ?? 0)} lawyers + ${Number(chartJudgeRes ?? 0)} judges.`
+        );
+        await fetchStats();
+        return;
       }
 
-      const [judgeCount, courtCount, lawyerJudgeCount] = await Promise.all([
-        supabase.from('judge_analytics').select('judge_id', { count: 'exact', head: true }),
-        supabase.from('court_analytics').select('court_id', { count: 'exact', head: true }),
-        supabase.from('lawyer_judge_analytics').select('lawyer_id', { count: 'exact', head: true }),
-      ]);
+      const scopePayload =
+        masterScope === 'all'
+          ? { p_scope: 'all', p_case_numbers: null, p_entity_type: null, p_entity_id: null }
+          : {
+              p_scope: 'entity_id',
+              p_case_numbers: null,
+              p_entity_type: masterScope,
+              p_entity_id: (masterEntityId || '').trim(),
+            };
 
+      if (masterScope !== 'all' && !(masterEntityId || '').trim()) {
+        throw new Error('Provide the selected entity UUID.');
+      }
+
+      const runWorker = async (rpcName: string, args: any) => {
+        log(`COMMAND: rpc ${rpcName}(${JSON.stringify(args)})`);
+        const { data, error } = await (supabase as any).rpc(rpcName, args);
+        if (error) throw error;
+        log(`RESULT: ${JSON.stringify(data, null, 2)}`);
+        return data;
+      };
+
+      const runWorkerWithChunkFallback = async (rpcName: string, args: any, chunkSize = 100) => {
+        try {
+          return await runWorker(rpcName, args);
+        } catch (error: any) {
+          if (!isStatementTimeoutError(error)) throw error;
+
+          log(`WARN: ${rpcName} timed out for scope ${args?.p_scope ?? 'unknown'}. Retrying in case-number chunks of ${chunkSize}.`);
+          const resolveCaseNumbers = async () => {
+            if (args?.p_scope === 'all') {
+              const all: string[] = [];
+              const page = 1000;
+              let from = 0;
+              while (true) {
+                const { data, error: pageError } = await supabase
+                  .from('cases_analytics')
+                  .select('case_number')
+                  .order('case_number', { ascending: true })
+                  .range(from, from + page - 1);
+                if (pageError) throw pageError;
+                const rows = (data ?? []) as Array<{ case_number?: string | null }>;
+                all.push(...rows.map((r) => String(r?.case_number ?? '').trim()).filter(Boolean));
+                if (rows.length < page) break;
+                from += page;
+              }
+              return Array.from(new Set(all));
+            }
+
+            const { data: scopedRows, error: scopeError } = await (supabase as any).rpc('admin_worker_scope_case_numbers', args);
+            if (scopeError) throw scopeError;
+            return Array.from(new Set(
+              (scopedRows ?? [])
+                .map((r: any) => String(r?.case_number ?? '').trim())
+                .filter(Boolean)
+            ));
+          };
+
+          const caseNumbers = await resolveCaseNumbers();
+
+          if (caseNumbers.length === 0) {
+            log(`WARN: ${rpcName} chunk fallback found 0 case numbers. Returning empty result.`);
+            return {};
+          }
+
+          const totalChunks = Math.ceil(caseNumbers.length / chunkSize);
+          let processed = 0;
+          const aggregate: Record<string, any> = {
+            chunked_fallback: true,
+            resolved_case_numbers_count: caseNumbers.length,
+          };
+
+          const mergeChunkData = (data: any) => {
+            if (!data || typeof data !== 'object') return;
+
+            Object.entries(data as Record<string, any>).forEach(([key, value]) => {
+              if (key === 'touched' && value && typeof value === 'object') {
+                const touched = value as Record<string, any>;
+                const currentTouched = (aggregate.touched ?? {}) as Record<string, any>;
+                const mergedTouched = { ...currentTouched };
+
+                if (Array.isArray(touched.lawyer_ids)) {
+                  mergedTouched.lawyer_ids = Array.from(new Set([
+                    ...(Array.isArray(currentTouched.lawyer_ids) ? currentTouched.lawyer_ids : []),
+                    ...touched.lawyer_ids,
+                  ].filter(Boolean)));
+                }
+                if (Array.isArray(touched.judge_ids)) {
+                  mergedTouched.judge_ids = Array.from(new Set([
+                    ...(Array.isArray(currentTouched.judge_ids) ? currentTouched.judge_ids : []),
+                    ...touched.judge_ids,
+                  ].filter(Boolean)));
+                }
+
+                aggregate.touched = mergedTouched;
+                return;
+              }
+
+              if (key === 'scope') {
+                return;
+              }
+
+              if (typeof value === 'number' && Number.isFinite(value)) {
+                aggregate[key] = Number(aggregate[key] ?? 0) + value;
+              } else if (!(key in aggregate)) {
+                aggregate[key] = value;
+              }
+            });
+          };
+
+          const runChunkWithAdaptiveSplit = async (chunk: string[], label: string): Promise<void> => {
+            const chunkPayload = {
+              p_scope: 'case_numbers',
+              p_case_numbers: chunk,
+              p_entity_type: null,
+              p_entity_id: null,
+            };
+
+            try {
+              const { data, error: chunkError } = await (supabase as any).rpc(rpcName, chunkPayload);
+              if (chunkError) throw chunkError;
+              processed += chunk.length;
+              mergeChunkData(data);
+              log(`RESULT: ${rpcName} chunk ${label} processed ${processed}/${caseNumbers.length} case(s).`);
+            } catch (chunkError: any) {
+              if (!isStatementTimeoutError(chunkError)) throw chunkError;
+
+              if (chunk.length <= 1) {
+                throw new Error(
+                  `${rpcName} timed out even for a single-case chunk (${chunk[0]}). `
+                  + 'This usually means the RPC is not respecting p_scope=case_numbers for this worker.'
+                );
+              }
+
+              const mid = Math.floor(chunk.length / 2);
+              const left = chunk.slice(0, mid);
+              const right = chunk.slice(mid);
+              log(`WARN: ${rpcName} chunk ${label} timed out for ${chunk.length} case(s). Splitting into ${left.length} + ${right.length}.`);
+              await runChunkWithAdaptiveSplit(left, `${label}a`);
+              await runChunkWithAdaptiveSplit(right, `${label}b`);
+            }
+          };
+
+          for (let i = 0; i < caseNumbers.length; i += chunkSize) {
+            const chunk = caseNumbers.slice(i, i + chunkSize);
+            await runChunkWithAdaptiveSplit(chunk, `${Math.floor(i / chunkSize) + 1}/${totalChunks}`);
+          }
+
+          aggregate.scope = {
+            scope: 'case_numbers',
+            entity_id: null,
+            entity_type: null,
+            resolved_case_numbers_count: caseNumbers.length,
+            requested_case_numbers_count: caseNumbers.length,
+            resolved_case_numbers_sample: caseNumbers.slice(0, 5),
+          };
+
+          log(`RESULT: ${rpcName} chunk fallback complete: ${JSON.stringify(aggregate, null, 2)}`);
+          return aggregate;
+        }
+      };
+
+      setMessage('Running worker pipeline (sync -> standardize -> entity sync -> frontend fallback chart refresh)...');
+
+      const syncRes = await runWorker('admin_cases_analytics_sync', scopePayload);
+      const standardizeRes = await runWorkerWithChunkFallback('admin_cases_analytics_standardize_names', scopePayload, 100);
+      const entityRes = await runWorkerWithChunkFallback('admin_cases_analytics_sync_entities', scopePayload, 100);
+      const useFallbackDefaultForJudge = masterScope === 'judge';
+      let rebuildRes: any = null;
+      let rebuildSkippedReason = '';
+      if (!useFallbackDefaultForJudge) {
+        try {
+          rebuildRes = await runWorkerWithChunkFallback('admin_cases_analytics_rebuild_analytics_4tables', scopePayload, 100);
+        } catch (rebuildError: any) {
+          const rebuildMsg = String(rebuildError?.message || rebuildError || '');
+          const scopeIgnored = rebuildMsg.includes('timed out even for a single-case chunk');
+          if (!scopeIgnored) throw rebuildError;
+
+          rebuildSkippedReason = 'server rebuild RPC ignored p_scope=case_numbers and timed out at single-case chunk';
+          log(`WARN: ${rebuildSkippedReason}. Switching to frontend fallback-only mode for this run.`);
+        }
+      } else {
+        log('INFO: Judge scope uses frontend fallback as default. Skipping heavy 4-table rebuild RPC.');
+      }
+
+      const touchedLawyerIds = rebuildRes?.touched?.lawyer_ids;
+      const touchedJudgeIds = useFallbackDefaultForJudge
+        ? [(masterEntityId || '').trim()].filter(Boolean)
+        : rebuildRes?.touched?.judge_ids;
+      const chartLawyerIds = Array.isArray(touchedLawyerIds) ? touchedLawyerIds.filter(Boolean) : [];
+      const chartJudgeIds = Array.isArray(touchedJudgeIds) ? touchedJudgeIds.filter(Boolean) : [];
+      let chartLawyerRes = 0;
+      let chartJudgeRes = 0;
+      for (const lawyerId of chartLawyerIds) {
+        chartLawyerRes += await refreshLawyerChartsClientFallback(
+          lawyerId,
+          {
+            p_scope: 'entity_id',
+            p_case_numbers: null,
+            p_entity_type: 'lawyer',
+            p_entity_id: lawyerId,
+          },
+          log
+        );
+      }
+
+      for (const judgeId of chartJudgeIds) {
+        chartJudgeRes += await refreshJudgeChartsClientFallback(
+          judgeId,
+          {
+            p_scope: 'entity_id',
+            p_case_numbers: null,
+            p_entity_type: 'judge',
+            p_entity_id: judgeId,
+          },
+          log
+        );
+      }
+
+      const totalTouchedLawyers = Array.isArray(touchedLawyerIds) ? touchedLawyerIds.length : 0;
+      const totalTouchedJudges = Array.isArray(touchedJudgeIds) ? touchedJudgeIds.length : 0;
       setMessage(
-        `Master analysis complete. Processed ${Number(totalProcessed ?? 0)} cases, updated ${Number(rebuildCount ?? 0)} lawyer rows, `
-        + `${judgeRebuilt || judgeCount.count || 0} judge rows, ${courtRebuilt || courtCount.count || 0} court rows, `
-        + `${pairRebuilt || lawyerJudgeCount.count || 0} lawyer-judge rows, and recomputed ${Number(triFactorCount ?? 0)} tri-factor ranks. `
-        + `Entity sync added ${syncedEntities.lawyers} lawyers, ${syncedEntities.judges} judges, and ${syncedEntities.courts} courts from cases. `
-        + `Duplicate merge found ${Number(mergeCardsData?.lawyer_duplicate_groups ?? 0)} lawyer groups and ${Number(mergeCardsData?.judge_duplicate_groups ?? 0)} judge groups. `
-        + `Merged ${Number(mergeCardsData?.merged_lawyers ?? 0)} duplicate lawyer cards and ${Number(mergeCardsData?.merged_judges ?? 0)} duplicate judge cards. `
-        + `Safety check: cases with lawyers before merge = ${Number(casesWithLawyersBeforeMerge ?? 0)}, after merge = ${Number(casesWithLawyersAfterMerge ?? 0)}.`
+        `Master worker pipeline complete. Sync inserted ${Number(syncRes?.inserted_cases_analytics_rows ?? 0)} row(s), `
+        + `standardized ${Number(standardizeRes?.lawyer_slot_updates ?? 0)} lawyer slots + ${Number(standardizeRes?.judge_slot_updates ?? 0)} judge slots, `
+        + `entity sync added ${Number(entityRes?.inserted_lawyers ?? 0)} lawyers / ${Number(entityRes?.inserted_judges ?? 0)} judges / ${Number(entityRes?.inserted_courts ?? 0)} courts, `
+        + (useFallbackDefaultForJudge
+          ? 'rebuild skipped (judge fallback-first mode). '
+          : rebuildRes
+            ? `rebuild updated ${Number(rebuildRes?.lawyer_rows ?? 0)} lawyer rows, ${Number(rebuildRes?.judge_rows ?? 0)} judge rows, ${Number(rebuildRes?.court_rows ?? 0)} court rows, ${Number(rebuildRes?.lawyer_judge_rows ?? 0)} lawyer-judge rows. `
+            : `rebuild skipped (${rebuildSkippedReason || 'fallback-only mode'}). `)
+        + `Frontend chart refresh touched ${totalTouchedLawyers} lawyer(s) + ${totalTouchedJudges} judge(s), updated ${Number(chartLawyerRes ?? 0)} lawyer row(s) + ${Number(chartJudgeRes ?? 0)} judge row(s).`
       );
     } catch (e: any) {
       setMessage(`Master analysis failed: ${e?.message || 'Unknown error'}`);
+      setTestDebugLog((prev) => `${prev ? `${prev}\n` : ''}[${new Date().toLocaleString()}] ERROR: ${e?.message || String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const isStatementTimeoutError = (err: any) => {
+    const msg = String(err?.message || err || '').toLowerCase();
+    return msg.includes('statement timeout') || msg.includes('canceling statement due to statement timeout');
+  };
+
+  const runTestMasterAnalysisOneLawyer = async () => {
+    setBusy(true);
+    setMessage('');
+    try {
+      const supabase = getSupabase();
+      const name = String(testLawyerName ?? '').trim();
+      if (!name) throw new Error('Enter a lawyer name to test.');
+      const stamp = () => new Date().toLocaleString();
+      const log = (line: string) => setTestDebugLog((prev) => `${prev ? `${prev}\n` : ''}[${stamp()}] ${line}`);
+      setTestDebugLog('');
+      setMessage(`Test master analysis: running scoped worker pipeline for "${name}" ...`);
+
+      const { data: candidateLawyers, error: candidateError } = await supabase
+        .from('lawyers')
+        .select('id,name')
+        .ilike('name', `%${name}%`)
+        .limit(50);
+      if (candidateError) throw candidateError;
+
+      const normalizedTarget = normalizeName(name);
+      const bestMatch = (candidateLawyers ?? []).find((l: any) => normalizeName(l?.name) === normalizedTarget) ?? (candidateLawyers ?? [])[0];
+      const runWorker = async (rpcName: string, args: any) => {
+        log(`COMMAND: rpc ${rpcName}(${JSON.stringify(args)})`);
+        const { data, error } = await (supabase as any).rpc(rpcName, args);
+        if (error) throw error;
+        log(`RESULT: ${JSON.stringify(data, null, 2)}`);
+        return data;
+      };
+
+      if (bestMatch?.id) {
+        const scopePayload = {
+          p_scope: 'entity_id',
+          p_case_numbers: null,
+          p_entity_type: 'lawyer',
+          p_entity_id: bestMatch.id,
+        };
+
+        const syncRes = await runWorker('admin_cases_analytics_sync', scopePayload);
+        const standardizeRes = await runWorker('admin_cases_analytics_standardize_names', scopePayload);
+        const entityRes = await runWorker('admin_cases_analytics_sync_entities', scopePayload);
+        const rebuildRes = await runWorker('admin_cases_analytics_rebuild_lawyer_analytics', scopePayload);
+
+        const touchedJudgeIds = Array.isArray(rebuildRes?.touched?.judge_ids)
+          ? rebuildRes.touched.judge_ids.filter(Boolean)
+          : [];
+        const lawyerChartRes = await refreshLawyerChartsClientFallback(bestMatch.id, scopePayload, log);
+        let judgeChartRes = 0;
+        for (const judgeId of touchedJudgeIds) {
+          judgeChartRes += await refreshJudgeChartsClientFallback(
+            judgeId,
+            {
+              p_scope: 'entity_id',
+              p_case_numbers: null,
+              p_entity_type: 'judge',
+              p_entity_id: judgeId,
+            },
+            log
+          );
+        }
+        log(`RESULT: frontend chart refresh updated ${lawyerChartRes} lawyer row(s) and ${judgeChartRes} judge row(s)`);
+
+        setMessage(
+          `Test complete for lawyer "${bestMatch.name}" (${bestMatch.id}). `
+          + `Sync inserted ${Number(syncRes?.inserted_cases_analytics_rows ?? 0)} row(s), `
+          + `standardized ${Number(standardizeRes?.lawyer_slot_updates ?? 0)} lawyer slots + ${Number(standardizeRes?.judge_slot_updates ?? 0)} judge slots, `
+          + `entity sync added ${Number(entityRes?.inserted_lawyers ?? 0)} lawyers / ${Number(entityRes?.inserted_judges ?? 0)} judges / ${Number(entityRes?.inserted_courts ?? 0)} courts, `
+          + `lawyer rebuild updated ${Number(rebuildRes?.lawyer_rows ?? 0)} lawyer rows, `
+          + `frontend chart refresh updated ${Number(lawyerChartRes ?? 0)} lawyer row(s) + ${Number(judgeChartRes ?? 0)} judge row(s).`
+        );
+        await fetchStats();
+        return;
+      }
+
+      const { data: candidateJudges, error: judgeError } = await supabase
+        .from('judges')
+        .select('id,name')
+        .ilike('name', `%${name}%`)
+        .limit(50);
+      if (judgeError) throw judgeError;
+
+      const bestJudge = (candidateJudges ?? []).find((j: any) => normalizeName(j?.name) === normalizedTarget) ?? (candidateJudges ?? [])[0];
+      if (!bestJudge?.id) {
+        throw new Error(`No matching lawyer or judge found for "${name}". Try the exact card name from Manage Lawyers or Manage Judges.`);
+      }
+
+      const judgeScopePayload = {
+        p_scope: 'entity_id',
+        p_case_numbers: null,
+        p_entity_type: 'judge',
+        p_entity_id: bestJudge.id,
+      };
+
+      const syncRes = await runWorker('admin_cases_analytics_sync', judgeScopePayload);
+      const standardizeRes = await runWorker('admin_cases_analytics_standardize_names', judgeScopePayload);
+      const entityRes = await runWorker('admin_cases_analytics_sync_entities', judgeScopePayload);
+      const useFallbackDefaultForJudge = true;
+      let rebuildRes: any = null;
+      if (!useFallbackDefaultForJudge) {
+        try {
+          rebuildRes = await runWorker('admin_cases_analytics_rebuild_analytics_4tables', judgeScopePayload);
+        } catch (rebuildError: any) {
+          if (!isStatementTimeoutError(rebuildError)) throw rebuildError;
+          log('WARN: 4-table rebuild timed out. Proceeding with frontend judge fallback refresh for scoped judge test.');
+        }
+      } else {
+        log('INFO: Judge test uses frontend fallback as default. Skipping heavy 4-table rebuild RPC.');
+      }
+
+      const touchedLawyerIds = Array.isArray(rebuildRes?.touched?.lawyer_ids)
+        ? rebuildRes.touched.lawyer_ids.filter(Boolean)
+        : [];
+      const touchedJudgeIds = Array.isArray(rebuildRes?.touched?.judge_ids)
+        ? rebuildRes.touched.judge_ids.filter(Boolean)
+        : [bestJudge.id];
+
+      let lawyerChartRes = 0;
+      for (const lawyerId of touchedLawyerIds) {
+        lawyerChartRes += await refreshLawyerChartsClientFallback(
+          lawyerId,
+          {
+            p_scope: 'entity_id',
+            p_case_numbers: null,
+            p_entity_type: 'lawyer',
+            p_entity_id: lawyerId,
+          },
+          log
+        );
+      }
+
+      let judgeChartRes = 0;
+      for (const judgeId of touchedJudgeIds) {
+        judgeChartRes += await refreshJudgeChartsClientFallback(
+          judgeId,
+          {
+            p_scope: 'entity_id',
+            p_case_numbers: null,
+            p_entity_type: 'judge',
+            p_entity_id: judgeId,
+          },
+          log
+        );
+      }
+      log(`RESULT: frontend chart refresh updated ${lawyerChartRes} lawyer row(s) and ${judgeChartRes} judge row(s)`);
+
+      setMessage(
+        `Test complete for judge "${bestJudge.name}" (${bestJudge.id}). `
+        + `Sync inserted ${Number(syncRes?.inserted_cases_analytics_rows ?? 0)} row(s), `
+        + `standardized ${Number(standardizeRes?.lawyer_slot_updates ?? 0)} lawyer slots + ${Number(standardizeRes?.judge_slot_updates ?? 0)} judge slots, `
+        + `entity sync added ${Number(entityRes?.inserted_lawyers ?? 0)} lawyers / ${Number(entityRes?.inserted_judges ?? 0)} judges / ${Number(entityRes?.inserted_courts ?? 0)} courts, `
+        + (useFallbackDefaultForJudge
+          ? 'rebuild skipped (judge fallback-first mode), '
+          : `rebuild updated ${Number(rebuildRes?.lawyer_rows ?? 0)} lawyer rows, ${Number(rebuildRes?.judge_rows ?? 0)} judge rows, ${Number(rebuildRes?.court_rows ?? 0)} court rows, ${Number(rebuildRes?.lawyer_judge_rows ?? 0)} lawyer-judge rows, `)
+        + `frontend chart refresh updated ${Number(lawyerChartRes ?? 0)} lawyer row(s) + ${Number(judgeChartRes ?? 0)} judge row(s).`
+      );
+      await fetchStats();
+    } catch (e: any) {
+      setMessage(`Test master analysis failed: ${e?.message || 'Unknown error'}`);
+      setTestDebugLog((prev) => `${prev ? `${prev}\n` : ''}[${new Date().toLocaleString()}] ERROR: ${e?.message || String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -728,7 +1146,8 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     x = x
       .replace(/\b(for\s+complainant|for\s+respondent|present\s+for\s+complainant|present\s+for\s+respondent)\b/g, ' ');
     // strip common titles/honorifics/legal prefixes
-    x = x.replace(/\b(adv\.?|advocate|ld\.?|mr\.?|mrs\.?|ms\.?|shri|smt|dr\.?|prof\.?|c\.?a\.?)\b/g, ' ');
+    // extra tokens: chairperson / maharera (to merge judge variants like "Chairperson MahaRERA")
+    x = x.replace(/\b(adv\.?|advocate|ld\.?|mr\.?|mrs\.?|ms\.?|shri|smt|dr\.?|prof\.?|c\.?a\.?|chairperson|maharera)\b/g, ' ');
     // punctuation and stray symbols
     x = x.replace(/[.,/\\|:;~`"!@#$%^&*_+=\-]+/g, ' ');
     // collapse whitespace
@@ -780,6 +1199,470 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     return 'other' as const;
   };
 
+  const refreshLawyerChartsClientFallback = async (
+    lawyerId: string,
+    scopePayload: { p_scope: string; p_case_numbers: string[] | null; p_entity_type: string; p_entity_id: string },
+    log: (line: string) => void
+  ) => {
+    const supabase = getSupabase();
+    const { data: lawyerRow, error: lawyerError } = await supabase
+      .from('lawyers')
+      .select('id,name')
+      .eq('id', lawyerId)
+      .single();
+    if (lawyerError) throw lawyerError;
+
+    const targetKey = normalizeName(lawyerRow?.name);
+    if (!targetKey) return 0;
+
+    log(`COMMAND: rpc admin_worker_scope_case_numbers(${JSON.stringify(scopePayload)})`);
+    const { data: scoped, error: scopedError } = await (supabase as any).rpc('admin_worker_scope_case_numbers', scopePayload);
+    if (scopedError) throw scopedError;
+    const caseNumbers = (scoped ?? [])
+      .map((r: any) => String(r?.case_number ?? '').trim())
+      .filter(Boolean);
+    if (caseNumbers.length === 0) return 0;
+
+    const rows: any[] = [];
+    const page = 200;
+    for (let i = 0; i < caseNumbers.length; i += page) {
+      const chunk = caseNumbers.slice(i, i + page);
+      const { data, error } = await supabase
+        .from('cases_analytics')
+        .select('case_number,petitioner_name,respondent_name,court_name,total_hearings,outcome,status,summary,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9')
+        .in('case_number', chunk);
+      if (error) throw error;
+      rows.push(...(data ?? []));
+    }
+
+    let repComplainant = 0;
+    let repRespondent = 0;
+    let hearings1_5 = 0;
+    let hearings6_10 = 0;
+    let hearings11_15 = 0;
+    let hearings16Plus = 0;
+
+    const partyCounts = new Map<string, { name: string; count: number; won: number; lost: number; settled: number }>();
+    const oppLawyerCounts = new Map<string, { name: string; count: number; won: number; lost: number; settled: number }>();
+    const judgeCounts = new Map<string, { name: string; count: number; won: number; lost: number; settled: number }>();
+    const settleCtx = new Map<string, { kind: 'opponent_lawyer' | 'judge'; name: string; n: number; settled: number }>();
+
+    const bumpNamed = (
+      map: Map<string, { name: string; count: number; won: number; lost: number; settled: number }>,
+      key: string,
+      name: string,
+      outcomeKind: 'won' | 'lost' | 'settled' | 'other'
+    ) => {
+      const prev = map.get(key);
+      if (prev) {
+        prev.count += 1;
+        if (outcomeKind === 'won') prev.won += 1;
+        else if (outcomeKind === 'lost') prev.lost += 1;
+        else if (outcomeKind === 'settled') prev.settled += 1;
+      } else {
+        map.set(key, {
+          name,
+          count: 1,
+          won: outcomeKind === 'won' ? 1 : 0,
+          lost: outcomeKind === 'lost' ? 1 : 0,
+          settled: outcomeKind === 'settled' ? 1 : 0,
+        });
+      }
+    };
+
+    const bumpSettle = (kind: 'opponent_lawyer' | 'judge', rawName: string, wasSettled: boolean) => {
+      const nm = String(rawName ?? '').trim();
+      if (!nm) return;
+      const key = `${kind}|${normalizeName(nm)}`;
+      if (!key.endsWith('|')) {
+        const prev = settleCtx.get(key);
+        if (prev) {
+          prev.n += 1;
+          if (wasSettled) prev.settled += 1;
+        } else {
+          settleCtx.set(key, { kind, name: nm, n: 1, settled: wasSettled ? 1 : 0 });
+        }
+      }
+    };
+
+    for (const c of rows) {
+      const petitionerLawyers = [
+        c.petitioner_lawyer_1, c.petitioner_lawyer_2, c.petitioner_lawyer_3, c.petitioner_lawyer_4, c.petitioner_lawyer_5,
+      ].filter(Boolean);
+      const respondentLawyers = [
+        c.respondent_lawyer_1, c.respondent_lawyer_2, c.respondent_lawyer_3, c.respondent_lawyer_4, c.respondent_lawyer_5,
+      ].filter(Boolean);
+
+      const petitionerList = petitionerLawyers.length > 0
+        ? petitionerLawyers
+        : [buildSelfRepresentedLawyerName(c.court_name, 'Complainant')];
+      const respondentList = respondentLawyers.length > 0
+        ? respondentLawyers
+        : [buildSelfRepresentedLawyerName(c.court_name, 'Respondent')];
+
+      const appearsPetitioner = petitionerList.some((n: string) => normalizeName(n) === targetKey);
+      const appearsRespondent = respondentList.some((n: string) => normalizeName(n) === targetKey);
+
+      if (!appearsPetitioner && !appearsRespondent) continue;
+
+      const hearings = Number(c.total_hearings ?? 0);
+      const normOutcome = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
+      const wasSettled = normOutcome === 'settled';
+
+      const creditSide = (side: 'Complainant' | 'Respondent') => {
+        if (side === 'Complainant') repComplainant += 1;
+        else repRespondent += 1;
+
+        const outcomeKind: 'won' | 'lost' | 'settled' | 'other' =
+          normOutcome === 'settled'
+            ? 'settled'
+            : (
+              (normOutcome === 'complainant' && side === 'Complainant')
+              || (normOutcome === 'respondent' && side === 'Respondent')
+            )
+              ? 'won'
+              : (
+                (normOutcome === 'complainant' && side === 'Respondent')
+                || (normOutcome === 'respondent' && side === 'Complainant')
+              )
+                ? 'lost'
+                : 'other';
+
+        if (hearings >= 1 && hearings <= 5) hearings1_5 += 1;
+        else if (hearings >= 6 && hearings <= 10) hearings6_10 += 1;
+        else if (hearings >= 11 && hearings <= 15) hearings11_15 += 1;
+        else if (hearings >= 16) hearings16Plus += 1;
+
+        const oppParty = String(
+          side === 'Complainant' ? (c.respondent_name ?? '(Unknown)') : (c.petitioner_name ?? '(Unknown)')
+        ).trim() || '(Unknown)';
+        const oppPartyKey = normalizeName(oppParty) || oppParty.toLowerCase();
+        bumpNamed(partyCounts, oppPartyKey, oppParty, outcomeKind);
+
+        const oppLawyers = side === 'Complainant' ? respondentList : petitionerList;
+        oppLawyers.forEach((nm: string) => {
+          const key = normalizeName(nm);
+          if (!key) return;
+          bumpNamed(oppLawyerCounts, key, String(nm).trim(), outcomeKind);
+          bumpSettle('opponent_lawyer', nm, wasSettled);
+        });
+
+        const judges = [c.judge_1, c.judge_2, c.judge_3, c.judge_4, c.judge_5, c.judge_6, c.judge_7, c.judge_8, c.judge_9]
+          .filter(Boolean);
+        judges.forEach((nm: string) => {
+          const key = normalizeName(nm);
+          if (!key) return;
+          bumpNamed(judgeCounts, key, String(nm).trim(), outcomeKind);
+          bumpSettle('judge', nm, wasSettled);
+        });
+      };
+
+      if (appearsPetitioner) creditSide('Complainant');
+      if (appearsRespondent) creditSide('Respondent');
+    }
+
+    const topN = (items: Array<{ name: string; count: number; won: number; lost: number; settled: number }>, n: number) =>
+      items
+        .sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name))
+        .slice(0, n);
+
+    const topParties = topN(
+      Array.from(partyCounts.values()),
+      5
+    );
+    const topOppLawyers = topN(Array.from(oppLawyerCounts.values()), 5);
+    const topJudges = topN(Array.from(judgeCounts.values()), 5);
+    const topSettle = Array.from(settleCtx.values())
+      .filter((x) => x.n >= 3)
+      .map((x) => ({ ...x, pct: Math.round(((x.settled / x.n) * 100 + Number.EPSILON) * 100) / 100 }))
+      .sort((a, b) => (b.pct - a.pct) || (b.n - a.n) || a.name.localeCompare(b.name))
+      .slice(0, 5);
+
+    const pct = (part: number, total: number) => (total > 0 ? Math.round((part * 10000) / total) / 100 : 0);
+
+    const patch: Record<string, any> = {
+      chart_rep_complainant_cases: repComplainant,
+      chart_rep_respondent_cases: repRespondent,
+      chart_hearings_1_5: hearings1_5,
+      chart_hearings_6_10: hearings6_10,
+      chart_hearings_11_15: hearings11_15,
+      chart_hearings_16_plus: hearings16Plus,
+      updated_at: new Date().toISOString(),
+    };
+
+    for (let i = 0; i < 5; i += 1) {
+      const p = topParties[i];
+      patch[`chart_top_party_${i + 1}_name`] = p?.name ?? null;
+      patch[`chart_top_party_${i + 1}_cases`] = p?.count ?? 0;
+      patch[`chart_top_party_${i + 1}_won`] = p?.won ?? 0;
+      patch[`chart_top_party_${i + 1}_lost`] = p?.lost ?? 0;
+      patch[`chart_top_party_${i + 1}_settled`] = p?.settled ?? 0;
+      const pTotal = Number(p?.count ?? 0);
+      patch[`chart_top_party_${i + 1}_win_rate`] = pct(Number(p?.won ?? 0), pTotal);
+      patch[`chart_top_party_${i + 1}_loss_rate`] = pct(Number(p?.lost ?? 0), pTotal);
+      patch[`chart_top_party_${i + 1}_settlement_rate`] = pct(Number(p?.settled ?? 0), pTotal);
+
+      const o = topOppLawyers[i];
+      patch[`chart_top_opp_lawyer_${i + 1}_name`] = o?.name ?? null;
+      patch[`chart_top_opp_lawyer_${i + 1}_cases`] = o?.count ?? 0;
+      patch[`chart_top_opp_lawyer_${i + 1}_won`] = o?.won ?? 0;
+      patch[`chart_top_opp_lawyer_${i + 1}_lost`] = o?.lost ?? 0;
+      patch[`chart_top_opp_lawyer_${i + 1}_settled`] = o?.settled ?? 0;
+      const oTotal = Number(o?.count ?? 0);
+      patch[`chart_top_opp_lawyer_${i + 1}_win_rate`] = pct(Number(o?.won ?? 0), oTotal);
+      patch[`chart_top_opp_lawyer_${i + 1}_loss_rate`] = pct(Number(o?.lost ?? 0), oTotal);
+      patch[`chart_top_opp_lawyer_${i + 1}_settlement_rate`] = pct(Number(o?.settled ?? 0), oTotal);
+
+      const j = topJudges[i];
+      patch[`chart_top_judge_${i + 1}_name`] = j?.name ?? null;
+      patch[`chart_top_judge_${i + 1}_cases`] = j?.count ?? 0;
+      patch[`chart_top_judge_${i + 1}_won`] = j?.won ?? 0;
+      patch[`chart_top_judge_${i + 1}_lost`] = j?.lost ?? 0;
+      patch[`chart_top_judge_${i + 1}_settled`] = j?.settled ?? 0;
+      const jTotal = Number(j?.count ?? 0);
+      patch[`chart_top_judge_${i + 1}_win_rate`] = pct(Number(j?.won ?? 0), jTotal);
+      patch[`chart_top_judge_${i + 1}_loss_rate`] = pct(Number(j?.lost ?? 0), jTotal);
+      patch[`chart_top_judge_${i + 1}_settlement_rate`] = pct(Number(j?.settled ?? 0), jTotal);
+
+      const s = topSettle[i];
+      patch[`chart_settle_${i + 1}_kind`] = s?.kind ?? null;
+      patch[`chart_settle_${i + 1}_name`] = s?.name ?? null;
+      patch[`chart_settle_${i + 1}_pct`] = s?.pct ?? null;
+      patch[`chart_settle_${i + 1}_n`] = s?.n ?? 0;
+    }
+
+    const { error: updateError } = await supabase
+      .from('lawyer_analytics')
+      .update(patch)
+      .eq('lawyer_id', lawyerId);
+    if (updateError) throw updateError;
+
+    return 1;
+  };
+
+  const refreshJudgeChartsClientFallback = async (
+    judgeId: string,
+    scopePayload: { p_scope: string; p_case_numbers: string[] | null; p_entity_type: string; p_entity_id: string },
+    log: (line: string) => void
+  ) => {
+    const supabase = getSupabase();
+    const { data: judgeRow, error: judgeError } = await supabase
+      .from('judges')
+      .select('id,name')
+      .eq('id', judgeId)
+      .single();
+    if (judgeError) throw judgeError;
+
+    const targetKey = normalizeName(judgeRow?.name);
+    if (!targetKey) return 0;
+
+    log(`COMMAND: rpc admin_worker_scope_case_numbers(${JSON.stringify(scopePayload)})`);
+    const { data: scoped, error: scopedError } = await (supabase as any).rpc('admin_worker_scope_case_numbers', scopePayload);
+    if (scopedError) throw scopedError;
+    const caseNumbers = (scoped ?? [])
+      .map((r: any) => String(r?.case_number ?? '').trim())
+      .filter(Boolean);
+    if (caseNumbers.length === 0) return 0;
+
+    const rows: any[] = [];
+    const page = 200;
+    for (let i = 0; i < caseNumbers.length; i += page) {
+      const chunk = caseNumbers.slice(i, i + page);
+      const { data, error } = await supabase
+        .from('cases_analytics')
+        .select('case_number,case_title,total_hearings,outcome,status,summary,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9')
+        .in('case_number', chunk);
+      if (error) throw error;
+      rows.push(...(data ?? []));
+    }
+
+    const appearsBeforeJudge = (r: any) => [
+      r.judge_1, r.judge_2, r.judge_3, r.judge_4, r.judge_5,
+      r.judge_6, r.judge_7, r.judge_8, r.judge_9,
+    ].some((name: string | null | undefined) => normalizeName(name) === targetKey);
+
+    const scopedRows = rows.filter(appearsBeforeJudge);
+    log(`RESULT: judge fallback diagnostics caseNumbers=${caseNumbers.length}, fetchedRows=${rows.length}, matchedJudgeRows=${scopedRows.length}`);
+    if (scopedRows.length === 0) return 0;
+
+    let hearings1 = 0;
+    let hearings2_3 = 0;
+    let hearings4_5 = 0;
+    let hearings5Plus = 0;
+
+    const lawyerCounts = new Map<string, { name: string; count: number; won: number; lost: number; settled: number }>();
+    const durationByLawyer = new Map<string, { name: string; totalDays: number; count: number }>();
+    const respondentCounts = new Map<string, { name: string; count: number; won: number; lost: number; settled: number }>();
+
+    const bump = (
+      map: Map<string, { name: string; count: number; won: number; lost: number; settled: number }>,
+      key: string,
+      name: string,
+      outcomeKind: 'won' | 'lost' | 'settled' | 'other'
+    ) => {
+      const prev = map.get(key);
+      if (prev) {
+        prev.count += 1;
+        if (outcomeKind === 'won') prev.won += 1;
+        else if (outcomeKind === 'lost') prev.lost += 1;
+        else if (outcomeKind === 'settled') prev.settled += 1;
+      } else {
+        map.set(key, {
+          name,
+          count: 1,
+          won: outcomeKind === 'won' ? 1 : 0,
+          lost: outcomeKind === 'lost' ? 1 : 0,
+          settled: outcomeKind === 'settled' ? 1 : 0,
+        });
+      }
+    };
+
+    const splitRespondents = (title: string) => {
+      const parts = title.split(/vs\.?|v\/s\.?|versus/i);
+      if (parts.length < 2) return [] as string[];
+      return String(parts[1] ?? '')
+        .split(/\s*&\s*|\s*,\s*|\s+and\s+/i)
+        .map((x) => String(x ?? '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+    };
+
+    const pct = (part: number, total: number) => (total > 0 ? Math.round((part * 10000) / total) / 100 : 0);
+
+    for (const c of scopedRows) {
+      const hearings = Number(c.total_hearings ?? 0);
+      if (hearings === 1) hearings1 += 1;
+      else if (hearings >= 2 && hearings <= 3) hearings2_3 += 1;
+      else if (hearings >= 4 && hearings <= 5) hearings4_5 += 1;
+      else if (hearings > 5) hearings5Plus += 1;
+
+      const normOutcome = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
+      const petitionerLawyers = [
+        c.petitioner_lawyer_1, c.petitioner_lawyer_2, c.petitioner_lawyer_3, c.petitioner_lawyer_4, c.petitioner_lawyer_5,
+      ].filter(Boolean);
+      const respondentLawyers = [
+        c.respondent_lawyer_1, c.respondent_lawyer_2, c.respondent_lawyer_3, c.respondent_lawyer_4, c.respondent_lawyer_5,
+      ].filter(Boolean);
+
+      const credit = (rawName: string, side: 'petitioner' | 'respondent') => {
+        const key = normalizeName(rawName);
+        if (!key) return;
+        const outcomeKind: 'won' | 'lost' | 'settled' | 'other' =
+          normOutcome === 'settled'
+            ? 'settled'
+            : (
+              (normOutcome === 'complainant' && side === 'petitioner')
+              || (normOutcome === 'respondent' && side === 'respondent')
+            )
+              ? 'won'
+              : (
+                (normOutcome === 'complainant' && side === 'respondent')
+                || (normOutcome === 'respondent' && side === 'petitioner')
+              )
+                ? 'lost'
+                : 'other';
+        bump(lawyerCounts, key, String(rawName).trim(), outcomeKind);
+      };
+
+      petitionerLawyers.forEach((nm: string) => credit(nm, 'petitioner'));
+      respondentLawyers.forEach((nm: string) => credit(nm, 'respondent'));
+
+      const respondents = splitRespondents(String(c.case_title ?? ''));
+      const respondentOutcome: 'won' | 'lost' | 'settled' | 'other' =
+        normOutcome === 'settled'
+          ? 'settled'
+          : normOutcome === 'respondent'
+            ? 'won'
+            : normOutcome === 'complainant'
+              ? 'lost'
+              : 'other';
+      respondents.forEach((name) => {
+        const key = normalizeName(name);
+        if (!key) return;
+        bump(respondentCounts, key, name, respondentOutcome);
+      });
+    }
+
+    const { data: ljaRows, error: ljaError } = await supabase
+      .from('lawyer_judge_analytics')
+      .select('lawyer_name,avg_case_duration_days')
+      .eq('judge_id', judgeId)
+      .order('avg_case_duration_days', { ascending: false })
+      .limit(20);
+    if (ljaError) throw ljaError;
+    (ljaRows ?? []).forEach((r: any) => {
+      const name = String(r?.lawyer_name ?? '').trim();
+      const avgDays = Number(r?.avg_case_duration_days ?? 0);
+      const key = normalizeName(name);
+      if (!key || !name || !Number.isFinite(avgDays) || avgDays <= 0) return;
+      durationByLawyer.set(key, { name, totalDays: avgDays, count: 1 });
+    });
+
+    const topN = (items: Array<{ name: string; count: number; won: number; lost: number; settled: number }>, n: number) =>
+      items.sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name)).slice(0, n);
+
+    const topLawyers = topN(Array.from(lawyerCounts.values()), 5);
+    const topRespondents = topN(Array.from(respondentCounts.values()), 5);
+    const topDurationLawyers = Array.from(durationByLawyer.values())
+      .sort((a, b) => b.totalDays - a.totalDays)
+      .slice(0, 5);
+
+    const patch: Record<string, any> = {
+      chart_hearings_1_cases: hearings1,
+      chart_hearings_2_3_cases: hearings2_3,
+      chart_hearings_4_5_cases: hearings4_5,
+      chart_hearings_5_plus_cases: hearings5Plus,
+      updated_at: new Date().toISOString(),
+    };
+
+    for (let i = 0; i < 5; i += 1) {
+      const l = topLawyers[i];
+      patch[`chart_top_lawyer_${i + 1}_name`] = l?.name ?? null;
+      patch[`chart_top_lawyer_${i + 1}_cases`] = l?.count ?? 0;
+      patch[`chart_top_lawyer_${i + 1}_won`] = l?.won ?? 0;
+      patch[`chart_top_lawyer_${i + 1}_lost`] = l?.lost ?? 0;
+      patch[`chart_top_lawyer_${i + 1}_settled`] = l?.settled ?? 0;
+      const lTotal = Math.max(Number(l?.count ?? 0), Number(l?.won ?? 0) + Number(l?.lost ?? 0) + Number(l?.settled ?? 0));
+      patch[`chart_top_lawyer_${i + 1}_win_rate`] = pct(Number(l?.won ?? 0), lTotal);
+      patch[`chart_top_lawyer_${i + 1}_loss_rate`] = pct(Number(l?.lost ?? 0), lTotal);
+      patch[`chart_top_lawyer_${i + 1}_settlement_rate`] = pct(Number(l?.settled ?? 0), lTotal);
+
+      const r = topRespondents[i];
+      patch[`chart_top_respondent_${i + 1}_name`] = r?.name ?? null;
+      patch[`chart_top_respondent_${i + 1}_cases`] = r?.count ?? 0;
+      patch[`chart_top_respondent_${i + 1}_won`] = r?.won ?? 0;
+      patch[`chart_top_respondent_${i + 1}_lost`] = r?.lost ?? 0;
+      patch[`chart_top_respondent_${i + 1}_settled`] = r?.settled ?? 0;
+      const rTotal = Math.max(Number(r?.count ?? 0), Number(r?.won ?? 0) + Number(r?.lost ?? 0) + Number(r?.settled ?? 0));
+      patch[`chart_top_respondent_${i + 1}_win_rate`] = pct(Number(r?.won ?? 0), rTotal);
+      patch[`chart_top_respondent_${i + 1}_loss_rate`] = pct(Number(r?.lost ?? 0), rTotal);
+      patch[`chart_top_respondent_${i + 1}_settlement_rate`] = pct(Number(r?.settled ?? 0), rTotal);
+
+      const d = topDurationLawyers[i];
+      patch[`chart_top_duration_lawyer_${i + 1}_name`] = d?.name ?? null;
+      patch[`chart_top_duration_lawyer_${i + 1}_avg_days`] = d ? Math.round(d.totalDays * 100) / 100 : 0;
+    }
+
+    const upsertPayload = {
+      judge_id: judgeId,
+      judge_name: String(judgeRow?.name ?? '').trim() || null,
+      ...patch,
+    };
+
+    const { error: updateError } = await (supabase.from('judge_analytics') as any)
+      .upsert([upsertPayload], { onConflict: 'judge_id' });
+    if (updateError) {
+      const msg = String(updateError?.message || updateError || '').toLowerCase();
+      if (msg.includes('schema cache') || msg.includes('could not find the')) {
+        throw new Error(
+          "Judge chart columns are missing in the DB schema cache. Apply migration supabase/migrations/20260403_add_judge_chart_outcome_breakdown_columns.sql and refresh Supabase schema cache, then rerun the test."
+        );
+      }
+      throw updateError;
+    }
+
+    return 1;
+  };
+
   const syncEntitiesFromCasesWide = async () => {
     const supabase = getSupabase();
     setMessage('Syncing lawyers, judges, and courts from cases ...');
@@ -812,7 +1695,53 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     };
   };
 
-  const rebuildLawyerAnalyticsClientWide = async () => {
+  const isDecidedOutcomeForAnalytics = (normOutcome: 'complainant' | 'respondent' | 'settled' | 'other') =>
+    normOutcome === 'complainant' || normOutcome === 'respondent' || normOutcome === 'settled';
+
+  const loadLatestCasesAnalyticsWide = async () => {
+    const supabase = getSupabase();
+    const latestByCaseNumber = new Map<string, any>();
+    let from = 0;
+    const page = 1000;
+
+    const isNewer = (candidate: any, current: any) => {
+      const cUpdated = candidate?.updated_at ? new Date(candidate.updated_at).getTime() : 0;
+      const xUpdated = current?.updated_at ? new Date(current.updated_at).getTime() : 0;
+      if (cUpdated !== xUpdated) return cUpdated > xUpdated;
+
+      const cCreated = candidate?.created_at ? new Date(candidate.created_at).getTime() : 0;
+      const xCreated = current?.created_at ? new Date(current.created_at).getTime() : 0;
+      if (cCreated !== xCreated) return cCreated > xCreated;
+
+      return String(candidate?.id ?? '') > String(current?.id ?? '');
+    };
+
+    while (true) {
+      setMessage(`Loading latest cases_analytics rows ... ${from + 1}-${from + page}`);
+      const { data, error } = await supabase
+        .from('cases_analytics')
+        .select('id,case_number,court_id,court_name,case_title,outcome,status,summary,filing_date,first_hearing_date,judgment_date,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5,updated_at,created_at')
+        .range(from, from + page - 1);
+      if (error) throw error;
+
+      const rows = (data ?? []) as any[];
+      rows.forEach((row) => {
+        const caseNumber = String(row?.case_number ?? '').trim();
+        if (!caseNumber) return;
+        const existing = latestByCaseNumber.get(caseNumber);
+        if (!existing || isNewer(row, existing)) {
+          latestByCaseNumber.set(caseNumber, row);
+        }
+      });
+
+      if (!rows.length || rows.length < page) break;
+      from += page;
+    }
+
+    return Array.from(latestByCaseNumber.values());
+  };
+
+  const rebuildLawyerAnalyticsClientWide = async (sourceRows?: any[]) => {
     const supabase = getSupabase();
     setMessage('Rebuilding lawyer analytics (wide) ...');
 
@@ -833,40 +1762,101 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       }
     }
 
+    // Resolve cases like "Abir P" to the best matching card name like "Abir Patel".
+    // We only apply this when the normalized slot ends with a 1-letter last token.
+    const lawyerInitialIndex = new Map<string, { keyName: string; score: number }>();
+    for (const [keyName] of lawyersMap.entries()) {
+      const tokens = keyName.split(" ").filter(Boolean);
+      if (tokens.length < 2) continue;
+      const base = tokens.slice(0, -1).join(" ");
+      const initial = tokens[tokens.length - 1].slice(0, 1);
+      const idxKey = `${base}|${initial}`;
+      const score = tokens[tokens.length - 1].length;
+      const prev = lawyerInitialIndex.get(idxKey);
+      if (!prev || score > prev.score || (score === prev.score && keyName < prev.keyName)) {
+        lawyerInitialIndex.set(idxKey, { keyName, score });
+      }
+    }
+
+    const resolveLawyerByKey = (keyName: string) => {
+      const direct = lawyersMap.get(keyName);
+      if (direct) return direct;
+
+      const tokens = keyName.split(" ").filter(Boolean);
+      if (tokens.length < 2) return null;
+      const last = tokens[tokens.length - 1];
+      if (last.length !== 1) return null;
+
+      const base = tokens.slice(0, -1).join(" ");
+      const idxKey = `${base}|${last}`;
+      const hit = lawyerInitialIndex.get(idxKey);
+      return hit ? (lawyersMap.get(hit.keyName) ?? null) : null;
+    };
+
     type Acc = {
       lawyer_id: string;
       lawyer_name: string;
-      cases: Set<string>;
+      totalCases: number;
       won: number;
       lost: number;
       settled: number;
+      dismissed: number;
+      withdrawn: number;
+      partiallyGranted: number;
       durationSum: number;
       durationCount: number;
     };
     const accByLawyerId = new Map<string, Acc>();
 
-    const credit = (rawName: string | null, caseNumber: string, side: 'Complainant' | 'Respondent', normOutcome: 'complainant' | 'respondent' | 'settled' | 'other', filing: string | null, judgment: string | null) => {
+    const credit = (
+      rawName: string | null,
+      side: 'Complainant' | 'Respondent',
+      normOutcome: 'complainant' | 'respondent' | 'settled' | 'other',
+      statusRaw: string | null,
+      filing: string | null,
+      judgment: string | null
+    ) => {
       const keyName = normalizeName(rawName);
       if (!keyName) return;
-      const lawyer = lawyersMap.get(keyName);
+      const lawyer = resolveLawyerByKey(keyName);
       if (!lawyer) return;
       let acc = accByLawyerId.get(lawyer.id);
       if (!acc) {
-        acc = { lawyer_id: lawyer.id, lawyer_name: lawyer.name, cases: new Set(), won: 0, lost: 0, settled: 0, durationSum: 0, durationCount: 0 };
+        acc = {
+          lawyer_id: lawyer.id,
+          lawyer_name: lawyer.name,
+          totalCases: 0,
+          won: 0,
+          lost: 0,
+          settled: 0,
+          dismissed: 0,
+          withdrawn: 0,
+          partiallyGranted: 0,
+          durationSum: 0,
+          durationCount: 0,
+        };
         accByLawyerId.set(lawyer.id, acc);
       }
-      if (!acc.cases.has(caseNumber)) acc.cases.add(caseNumber); // Always count appearances to reflect experience
-      // Only outcome-specific tallies require explicit normalization
-      if (normOutcome === 'settled') acc.settled += 1;
-      else if (normOutcome === 'complainant') {
-        if (side === 'Complainant') acc.won += 1;
-        else acc.lost += 1;
-      } else if (normOutcome === 'respondent') {
-        if (side === 'Respondent') acc.won += 1;
-        else acc.lost += 1;
+
+      const decided = isDecidedOutcomeForAnalytics(normOutcome);
+      if (decided) {
+        acc.totalCases += 1;
+        if (normOutcome === 'settled') acc.settled += 1;
+        else if (normOutcome === 'complainant') {
+          if (side === 'Complainant') acc.won += 1;
+          else acc.lost += 1;
+        } else if (normOutcome === 'respondent') {
+          if (side === 'Respondent') acc.won += 1;
+          else acc.lost += 1;
+        }
       }
-      // Duration analysis can still proceed independently when dates exist
-      if (filing && judgment) {
+
+      const status = (statusRaw ?? '').toLowerCase();
+      if (/dismiss|rejected/.test(status)) acc.dismissed += 1;
+      if (/withdraw/.test(status)) acc.withdrawn += 1;
+      if (/partial|partly|in\s+part/.test(status)) acc.partiallyGranted += 1;
+
+      if (decided && filing && judgment) {
         const d = (new Date(judgment).getTime() - new Date(filing).getTime()) / 86400000;
         if (Number.isFinite(d) && d >= 0) {
           acc.durationSum += Math.round(d);
@@ -875,38 +1865,22 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       }
     };
 
-    // Stream cases in batches
-    {
-      let from = 0;
-      const page = 1000;
-      while (true) {
-        const { data, error } = await supabase
-          .from('cases')
-          .select('case_number,court_name,outcome,status,summary,filing_date,first_hearing_date,judgment_date,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5')
-          .order('updated_at', { ascending: false })
-          .range(from, from + page - 1);
-        if (error) throw error;
-        (data ?? []).forEach((c: any) => {
-          const cn = String(c.case_number ?? '').trim();
-          const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
-          const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
-          const jd = c.judgment_date ?? null;
-          const pets = [c.petitioner_lawyer_1, c.petitioner_lawyer_2, c.petitioner_lawyer_3, c.petitioner_lawyer_4, c.petitioner_lawyer_5].filter(Boolean);
-          const ress = [c.respondent_lawyer_1, c.respondent_lawyer_2, c.respondent_lawyer_3, c.respondent_lawyer_4, c.respondent_lawyer_5].filter(Boolean);
-          const petitionerLawyers = pets.length ? pets : [buildSelfRepresentedLawyerName(c.court_name, 'Complainant')];
-          const respondentLawyers = ress.length ? ress : [buildSelfRepresentedLawyerName(c.court_name, 'Respondent')];
-          petitionerLawyers.forEach((n: string) => credit(n, cn, 'Complainant', norm, fd, jd));
-          respondentLawyers.forEach((n: string) => credit(n, cn, 'Respondent', norm, fd, jd));
-        });
-        if (!data || data.length < page) break;
-        from += page;
-        setMessage(`Rebuilding lawyer analytics (wide) ... processed ${from} cases`);
-      }
-    }
+    const rowsForRebuild = sourceRows ?? await loadLatestCasesAnalyticsWide();
+    rowsForRebuild.forEach((c: any) => {
+      const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
+      const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
+      const jd = c.judgment_date ?? null;
+      const pets = [c.petitioner_lawyer_1, c.petitioner_lawyer_2, c.petitioner_lawyer_3, c.petitioner_lawyer_4, c.petitioner_lawyer_5].filter(Boolean);
+      const ress = [c.respondent_lawyer_1, c.respondent_lawyer_2, c.respondent_lawyer_3, c.respondent_lawyer_4, c.respondent_lawyer_5].filter(Boolean);
+      const petitionerLawyers = pets.length ? pets : [buildSelfRepresentedLawyerName(c.court_name, 'Complainant')];
+      const respondentLawyers = ress.length ? ress : [buildSelfRepresentedLawyerName(c.court_name, 'Respondent')];
+      petitionerLawyers.forEach((n: string) => credit(n, 'Complainant', norm, c.status ?? null, fd, jd));
+      respondentLawyers.forEach((n: string) => credit(n, 'Respondent', norm, c.status ?? null, fd, jd));
+    });
 
     // Prepare upserts
     const rows = Array.from(accByLawyerId.values()).map((a) => {
-      const total = a.cases.size;
+      const total = a.totalCases;
       const win_rate = total > 0 ? Math.round(((a.won / total) * 100 + Number.EPSILON) * 100) / 100 : 0;
       const loss_rate = total > 0 ? Math.round(((a.lost / total) * 100 + Number.EPSILON) * 100) / 100 : 0;
       const settlement_rate = total > 0 ? Math.round(((a.settled / total) * 100 + Number.EPSILON) * 100) / 100 : 0;
@@ -918,6 +1892,9 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
         won_cases: a.won,
         lost_cases: a.lost,
         settled_cases: a.settled,
+        dismissed_cases: a.dismissed,
+        withdrawn_cases: a.withdrawn,
+        partially_granted_cases: a.partiallyGranted,
         duration_count: a.durationCount,
         duration_sum_days: a.durationSum,
         win_rate,
@@ -937,9 +1914,10 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       setMessage(`Rebuilding lawyer analytics (wide) ... upserted ${Math.min(i + chunk, rows.length)} / ${rows.length}`);
     }
     setMessage(`Rebuilding lawyer analytics (wide) ... completed for ${rows.length} lawyers`);
+    return rows.length;
   };
 
-  const rebuildJudgeAnalyticsClientWide = async () => {
+  const rebuildJudgeAnalyticsClientWide = async (sourceRows?: any[]) => {
     const supabase = getSupabase();
     setMessage('Rebuilding judge analytics (wide) ...');
 
@@ -957,10 +1935,39 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       from += page;
     }
 
+    const judgeInitialIndex = new Map<string, { keyName: string; score: number }>();
+    for (const [keyName] of judgesMap.entries()) {
+      const tokens = keyName.split(" ").filter(Boolean);
+      if (tokens.length < 2) continue;
+      const base = tokens.slice(0, -1).join(" ");
+      const initial = tokens[tokens.length - 1].slice(0, 1);
+      const idxKey = `${base}|${initial}`;
+      const score = tokens[tokens.length - 1].length;
+      const prev = judgeInitialIndex.get(idxKey);
+      if (!prev || score > prev.score || (score === prev.score && keyName < prev.keyName)) {
+        judgeInitialIndex.set(idxKey, { keyName, score });
+      }
+    }
+
+    const resolveJudgeByKey = (keyName: string) => {
+      const direct = judgesMap.get(keyName);
+      if (direct) return direct;
+
+      const tokens = keyName.split(" ").filter(Boolean);
+      if (tokens.length < 2) return null;
+      const last = tokens[tokens.length - 1];
+      if (last.length !== 1) return null;
+
+      const base = tokens.slice(0, -1).join(" ");
+      const idxKey = `${base}|${last}`;
+      const hit = judgeInitialIndex.get(idxKey);
+      return hit ? (judgesMap.get(hit.keyName) ?? null) : null;
+    };
+
     type JudgeAcc = {
       judge_id: string;
       judge_name: string;
-      cases: Set<string>;
+      totalCases: number;
       favorComplainant: number;
       favorRespondent: number;
       settled: number;
@@ -974,7 +1981,6 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
 
     const creditJudge = (
       rawName: string | null,
-      caseNumber: string,
       normOutcome: 'complainant' | 'respondent' | 'settled' | 'other',
       statusRaw: string | null,
       filing: string | null,
@@ -982,14 +1988,14 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     ) => {
       const keyName = normalizeName(rawName);
       if (!keyName) return;
-      const judge = judgesMap.get(keyName);
+      const judge = resolveJudgeByKey(keyName);
       if (!judge) return;
       let acc = accByJudgeId.get(judge.id);
       if (!acc) {
         acc = {
           judge_id: judge.id,
           judge_name: judge.name,
-          cases: new Set(),
+          totalCases: 0,
           favorComplainant: 0,
           favorRespondent: 0,
           settled: 0,
@@ -1001,15 +2007,20 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
         };
         accByJudgeId.set(judge.id, acc);
       }
-      if (!acc.cases.has(caseNumber)) acc.cases.add(caseNumber);
-      if (normOutcome === 'complainant') acc.favorComplainant += 1;
-      else if (normOutcome === 'respondent') acc.favorRespondent += 1;
-      else if (normOutcome === 'settled') acc.settled += 1;
+
+      const decided = isDecidedOutcomeForAnalytics(normOutcome);
+      if (decided) {
+        acc.totalCases += 1;
+        if (normOutcome === 'complainant') acc.favorComplainant += 1;
+        else if (normOutcome === 'respondent') acc.favorRespondent += 1;
+        else if (normOutcome === 'settled') acc.settled += 1;
+      }
+
       const status = (statusRaw ?? '').toLowerCase();
       if (/dismiss|rejected/.test(status)) acc.dismissed += 1;
       if (/withdraw/.test(status)) acc.withdrawn += 1;
       if (/partial|partly|in\s+part/.test(status)) acc.partiallyGranted += 1;
-      if (filing && judgment) {
+      if (decided && filing && judgment) {
         const d = (new Date(judgment).getTime() - new Date(filing).getTime()) / 86400000;
         if (Number.isFinite(d) && d >= 0) {
           acc.durationSum += Math.round(d);
@@ -1018,29 +2029,17 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       }
     };
 
-    from = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from('cases')
-        .select('case_number,outcome,status,summary,filing_date,first_hearing_date,judgment_date,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9')
-        .order('updated_at', { ascending: false })
-        .range(from, from + page - 1);
-      if (error) throw error;
-      (data ?? []).forEach((c: any) => {
-        const cn = String(c.case_number ?? '').trim();
-        const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
-        const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
-        const jd = c.judgment_date ?? null;
-        const judges = [c.judge_1, c.judge_2, c.judge_3, c.judge_4, c.judge_5, c.judge_6, c.judge_7, c.judge_8, c.judge_9];
-        judges.filter(Boolean).forEach((n: string) => creditJudge(n, cn, norm, c.status ?? null, fd, jd));
-      });
-      if (!data || data.length < page) break;
-      from += page;
-      setMessage(`Rebuilding judge analytics (wide) ... processed ${from} cases`);
-    }
+    const rowsForRebuild = sourceRows ?? await loadLatestCasesAnalyticsWide();
+    rowsForRebuild.forEach((c: any) => {
+      const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
+      const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
+      const jd = c.judgment_date ?? null;
+      const judges = [c.judge_1, c.judge_2, c.judge_3, c.judge_4, c.judge_5, c.judge_6, c.judge_7, c.judge_8, c.judge_9];
+      judges.filter(Boolean).forEach((n: string) => creditJudge(n, norm, c.status ?? null, fd, jd));
+    });
 
     const rows = Array.from(accByJudgeId.values()).map((a) => {
-      const total = a.cases.size;
+      const total = a.totalCases;
       return {
         judge_id: a.judge_id,
         judge_name: a.judge_name,
@@ -1070,7 +2069,7 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     return rows.length;
   };
 
-  const rebuildCourtAnalyticsClientWide = async () => {
+  const rebuildCourtAnalyticsClientWide = async (sourceRows?: any[]) => {
     const supabase = getSupabase();
     setMessage('Rebuilding court analytics (wide) ...');
 
@@ -1091,7 +2090,7 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     type CourtAcc = {
       court_id: string;
       court_name: string;
-      cases: Set<string>;
+      totalCases: number;
       favorComplainant: number;
       favorRespondent: number;
       settled: number;
@@ -1103,60 +2102,54 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     };
     const accByCourtId = new Map<string, CourtAcc>();
 
-    from = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from('cases')
-        .select('case_number,court_name,outcome,status,summary,filing_date,first_hearing_date,judgment_date')
-        .order('updated_at', { ascending: false })
-        .range(from, from + page - 1);
-      if (error) throw error;
-      (data ?? []).forEach((c: any) => {
-        const cn = String(c.case_number ?? '').trim();
-        const court = courtsMap.get(normalizeName(c.court_name));
-        if (!court) return;
-        let acc = accByCourtId.get(court.id);
-        if (!acc) {
-          acc = {
-            court_id: court.id,
-            court_name: court.name,
-            cases: new Set(),
-            favorComplainant: 0,
-            favorRespondent: 0,
-            settled: 0,
-            dismissed: 0,
-            withdrawn: 0,
-            partiallyGranted: 0,
-            durationSum: 0,
-            durationCount: 0,
-          };
-          accByCourtId.set(court.id, acc);
-        }
-        if (!acc.cases.has(cn)) acc.cases.add(cn);
-        const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
+    const rowsForRebuild = sourceRows ?? await loadLatestCasesAnalyticsWide();
+    rowsForRebuild.forEach((c: any) => {
+      const court = courtsMap.get(normalizeName(c.court_name));
+      if (!court) return;
+      let acc = accByCourtId.get(court.id);
+      if (!acc) {
+        acc = {
+          court_id: court.id,
+          court_name: court.name,
+          totalCases: 0,
+          favorComplainant: 0,
+          favorRespondent: 0,
+          settled: 0,
+          dismissed: 0,
+          withdrawn: 0,
+          partiallyGranted: 0,
+          durationSum: 0,
+          durationCount: 0,
+        };
+        accByCourtId.set(court.id, acc);
+      }
+
+      const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
+      const decided = isDecidedOutcomeForAnalytics(norm);
+      if (decided) {
+        acc.totalCases += 1;
         if (norm === 'complainant') acc.favorComplainant += 1;
         else if (norm === 'respondent') acc.favorRespondent += 1;
         else if (norm === 'settled') acc.settled += 1;
-        const status = (c.status ?? '').toLowerCase();
-        if (/dismiss|rejected/.test(status)) acc.dismissed += 1;
-        if (/withdraw/.test(status)) acc.withdrawn += 1;
-        if (/partial|partly|in\s+part/.test(status)) acc.partiallyGranted += 1;
-        const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
-        const jd = c.judgment_date ?? null;
-        if (fd && jd) {
-          const d = (new Date(jd).getTime() - new Date(fd).getTime()) / 86400000;
-          if (Number.isFinite(d) && d >= 0) {
-            acc.durationSum += Math.round(d);
-            acc.durationCount += 1;
-          }
+      }
+
+      const status = (c.status ?? '').toLowerCase();
+      if (/dismiss|rejected/.test(status)) acc.dismissed += 1;
+      if (/withdraw/.test(status)) acc.withdrawn += 1;
+      if (/partial|partly|in\s+part/.test(status)) acc.partiallyGranted += 1;
+      const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
+      const jd = c.judgment_date ?? null;
+      if (decided && fd && jd) {
+        const d = (new Date(jd).getTime() - new Date(fd).getTime()) / 86400000;
+        if (Number.isFinite(d) && d >= 0) {
+          acc.durationSum += Math.round(d);
+          acc.durationCount += 1;
         }
-      });
-      if (!data || data.length < page) break;
-      from += page;
-    }
+      }
+    });
 
     const rows = Array.from(accByCourtId.values()).map((a) => {
-      const total = a.cases.size;
+      const total = a.totalCases;
       return {
         court_id: a.court_id,
         court_name: a.court_name,
@@ -1184,7 +2177,7 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     return rows.length;
   };
 
-  const rebuildLawyerJudgeAnalyticsClientWide = async () => {
+  const rebuildLawyerJudgeAnalyticsClientWide = async (sourceRows?: any[]) => {
     const supabase = getSupabase();
     setMessage('Rebuilding lawyer-judge analytics (wide) ...');
 
@@ -1216,12 +2209,66 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       from += page;
     }
 
+    const lawyerInitialIndex = new Map<string, { keyName: string; score: number }>();
+    for (const [keyName] of lawyersMap.entries()) {
+      const tokens = keyName.split(" ").filter(Boolean);
+      if (tokens.length < 2) continue;
+      const base = tokens.slice(0, -1).join(" ");
+      const initial = tokens[tokens.length - 1].slice(0, 1);
+      const idxKey = `${base}|${initial}`;
+      const score = tokens[tokens.length - 1].length;
+      const prev = lawyerInitialIndex.get(idxKey);
+      if (!prev || score > prev.score || (score === prev.score && keyName < prev.keyName)) {
+        lawyerInitialIndex.set(idxKey, { keyName, score });
+      }
+    }
+
+    const judgeInitialIndex = new Map<string, { keyName: string; score: number }>();
+    for (const [keyName] of judgesMap.entries()) {
+      const tokens = keyName.split(" ").filter(Boolean);
+      if (tokens.length < 2) continue;
+      const base = tokens.slice(0, -1).join(" ");
+      const initial = tokens[tokens.length - 1].slice(0, 1);
+      const idxKey = `${base}|${initial}`;
+      const score = tokens[tokens.length - 1].length;
+      const prev = judgeInitialIndex.get(idxKey);
+      if (!prev || score > prev.score || (score === prev.score && keyName < prev.keyName)) {
+        judgeInitialIndex.set(idxKey, { keyName, score });
+      }
+    }
+
+    const resolveLawyerByKey = (keyName: string) => {
+      const direct = lawyersMap.get(keyName);
+      if (direct) return direct;
+      const tokens = keyName.split(" ").filter(Boolean);
+      if (tokens.length < 2) return null;
+      const last = tokens[tokens.length - 1];
+      if (last.length !== 1) return null;
+      const base = tokens.slice(0, -1).join(" ");
+      const idxKey = `${base}|${last}`;
+      const hit = lawyerInitialIndex.get(idxKey);
+      return hit ? (lawyersMap.get(hit.keyName) ?? null) : null;
+    };
+
+    const resolveJudgeByKey = (keyName: string) => {
+      const direct = judgesMap.get(keyName);
+      if (direct) return direct;
+      const tokens = keyName.split(" ").filter(Boolean);
+      if (tokens.length < 2) return null;
+      const last = tokens[tokens.length - 1];
+      if (last.length !== 1) return null;
+      const base = tokens.slice(0, -1).join(" ");
+      const idxKey = `${base}|${last}`;
+      const hit = judgeInitialIndex.get(idxKey);
+      return hit ? (judgesMap.get(hit.keyName) ?? null) : null;
+    };
+
     type PairAcc = {
       lawyer_id: string;
       judge_id: string;
       lawyer_name: string;
       judge_name: string;
-      cases: Set<string>;
+      totalCases: number;
       won: number;
       lost: number;
       settled: number;
@@ -1230,44 +2277,45 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
     };
     const accByPair = new Map<string, PairAcc>();
 
-    from = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from('cases')
-        .select('case_number,court_name,outcome,status,summary,filing_date,first_hearing_date,judgment_date,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5')
-        .order('updated_at', { ascending: false })
-        .range(from, from + page - 1);
-      if (error) throw error;
-      (data ?? []).forEach((c: any) => {
-        const cn = String(c.case_number ?? '').trim();
-        const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
-        const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
-        const jd = c.judgment_date ?? null;
-        const judges = [c.judge_1, c.judge_2, c.judge_3, c.judge_4, c.judge_5, c.judge_6, c.judge_7, c.judge_8, c.judge_9]
-          .map((n: string | null) => judgesMap.get(normalizeName(n)))
-          .filter(Boolean) as Array<{ id: string; name: string }>;
-        const addPair = (rawLawyerName: string | null, side: 'Complainant' | 'Respondent') => {
-          const lawyer = lawyersMap.get(normalizeName(rawLawyerName));
-          if (!lawyer) return;
-          judges.forEach((judge) => {
-            const key = `${lawyer.id}::${judge.id}`;
-            let acc = accByPair.get(key);
-            if (!acc) {
-              acc = {
-                lawyer_id: lawyer.id,
-                judge_id: judge.id,
-                lawyer_name: lawyer.name,
-                judge_name: judge.name,
-                cases: new Set(),
-                won: 0,
-                lost: 0,
-                settled: 0,
-                durationSum: 0,
-                durationCount: 0,
-              };
-              accByPair.set(key, acc);
-            }
-            if (!acc.cases.has(cn)) acc.cases.add(cn);
+    const rowsForRebuild = sourceRows ?? await loadLatestCasesAnalyticsWide();
+    rowsForRebuild.forEach((c: any) => {
+      const norm = normalizeOutcomeForAnalytics(c.outcome ?? null, c.status ?? null, c.summary ?? null);
+      const decided = isDecidedOutcomeForAnalytics(norm);
+      const fd = (c.filing_date ?? c.first_hearing_date) ?? null;
+      const jd = c.judgment_date ?? null;
+      const judges = [c.judge_1, c.judge_2, c.judge_3, c.judge_4, c.judge_5, c.judge_6, c.judge_7, c.judge_8, c.judge_9]
+        .map((n: string | null) => {
+          const key = normalizeName(n);
+          if (!key) return null;
+          return resolveJudgeByKey(key);
+        })
+        .filter(Boolean) as Array<{ id: string; name: string }>;
+
+      const addPair = (rawLawyerName: string | null, side: 'Complainant' | 'Respondent') => {
+        const key = normalizeName(rawLawyerName);
+        const lawyer = key ? resolveLawyerByKey(key) : null;
+        if (!lawyer) return;
+        judges.forEach((judge) => {
+          const pairKey = `${lawyer.id}::${judge.id}`;
+          let acc = accByPair.get(pairKey);
+          if (!acc) {
+            acc = {
+              lawyer_id: lawyer.id,
+              judge_id: judge.id,
+              lawyer_name: lawyer.name,
+              judge_name: judge.name,
+              totalCases: 0,
+              won: 0,
+              lost: 0,
+              settled: 0,
+              durationSum: 0,
+              durationCount: 0,
+            };
+            accByPair.set(pairKey, acc);
+          }
+
+          if (decided) {
+            acc.totalCases += 1;
             if (norm === 'settled') acc.settled += 1;
             else if (norm === 'complainant') {
               if (side === 'Complainant') acc.won += 1;
@@ -1276,30 +2324,30 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
               if (side === 'Respondent') acc.won += 1;
               else acc.lost += 1;
             }
-            if (fd && jd) {
-              const d = (new Date(jd).getTime() - new Date(fd).getTime()) / 86400000;
-              if (Number.isFinite(d) && d >= 0) {
-                acc.durationSum += Math.round(d);
-                acc.durationCount += 1;
-              }
+          }
+
+          if (decided && fd && jd) {
+            const d = (new Date(jd).getTime() - new Date(fd).getTime()) / 86400000;
+            if (Number.isFinite(d) && d >= 0) {
+              acc.durationSum += Math.round(d);
+              acc.durationCount += 1;
             }
-          });
-        };
-        const petitionerLawyers = [c.petitioner_lawyer_1, c.petitioner_lawyer_2, c.petitioner_lawyer_3, c.petitioner_lawyer_4, c.petitioner_lawyer_5]
-          .filter(Boolean);
-        const respondentLawyers = [c.respondent_lawyer_1, c.respondent_lawyer_2, c.respondent_lawyer_3, c.respondent_lawyer_4, c.respondent_lawyer_5]
-          .filter(Boolean);
-        (petitionerLawyers.length ? petitionerLawyers : [buildSelfRepresentedLawyerName(c.court_name, 'Complainant')])
-          .forEach((n: string) => addPair(n, 'Complainant'));
-        (respondentLawyers.length ? respondentLawyers : [buildSelfRepresentedLawyerName(c.court_name, 'Respondent')])
-          .forEach((n: string) => addPair(n, 'Respondent'));
-      });
-      if (!data || data.length < page) break;
-      from += page;
-    }
+          }
+        });
+      };
+
+      const petitionerLawyers = [c.petitioner_lawyer_1, c.petitioner_lawyer_2, c.petitioner_lawyer_3, c.petitioner_lawyer_4, c.petitioner_lawyer_5]
+        .filter(Boolean);
+      const respondentLawyers = [c.respondent_lawyer_1, c.respondent_lawyer_2, c.respondent_lawyer_3, c.respondent_lawyer_4, c.respondent_lawyer_5]
+        .filter(Boolean);
+      (petitionerLawyers.length ? petitionerLawyers : [buildSelfRepresentedLawyerName(c.court_name, 'Complainant')])
+        .forEach((n: string) => addPair(n, 'Complainant'));
+      (respondentLawyers.length ? respondentLawyers : [buildSelfRepresentedLawyerName(c.court_name, 'Respondent')])
+        .forEach((n: string) => addPair(n, 'Respondent'));
+    });
 
     const rows = Array.from(accByPair.values()).map((a) => {
-      const total = a.cases.size;
+      const total = a.totalCases;
       return {
         lawyer_id: a.lawyer_id,
         judge_id: a.judge_id,
@@ -1870,7 +2918,7 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
           <div className="rounded-lg border bg-white p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-2">PDF Judgment Extraction Engine</h3>
             <p className="text-sm text-gray-600 mb-4">
-              Upload judgments in PDF, configure AI processing threads, and monitor extraction progress.
+              Runs the scoped worker pipeline: cases_analytics sync, name standardization, entity sync, 4-table rebuild, and frontend lawyer chart refresh.
             </p>
             <PdfExtractionDashboard />
           </div>
@@ -1915,15 +2963,79 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
           <div className="rounded-lg border bg-white p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Master Table Analysis</h3>
             <p className="text-sm text-gray-600 mb-4">
-              Runs outcome quality analysis and recalculates lawyer/judge/court + lawyer-vs-judge analytics from `cases` in batches.
+              Runs the scoped worker pipeline: cases_analytics sync, name standardization, entity sync, 4-table rebuild, and lawyer chart refresh.
             </p>
-            <button
-              onClick={runMasterTableAnalysis}
-              disabled={busy}
-              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {busy ? 'Working...' : 'Run Master Analysis'}
-            </button>
+            <div className="grid md:grid-cols-3 gap-3 mb-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Scope</label>
+                <select
+                  value={masterScope}
+                  onChange={(e) => setMasterScope(e.target.value as 'all' | 'lawyer' | 'judge' | 'court')}
+                  disabled={busy}
+                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                >
+                  <option value="all">Full</option>
+                  <option value="lawyer">OneLawyer</option>
+                  <option value="judge">OneJudge</option>
+                  <option value="court">OneCourt</option>
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Entity UUID (for OneLawyer/OneJudge/OneCourt)</label>
+                <input
+                  value={masterEntityId}
+                  onChange={(e) => setMasterEntityId(e.target.value)}
+                  disabled={busy || masterScope === 'all'}
+                  placeholder="e.g. 8c7b57ec-7f14-4a78-9a37-c9a6db8bf8f9"
+                  className="w-full rounded-lg border px-3 py-2 text-sm disabled:bg-slate-100"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={runMasterTableAnalysis}
+                disabled={busy}
+                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {busy ? 'Working...' : 'Run Master Analysis'}
+              </button>
+
+              <div className="flex items-center gap-2">
+                <input
+                  value={testLawyerName}
+                  onChange={(e) => setTestLawyerName(e.target.value)}
+                  placeholder="Lawyer or Judge name (test)"
+                  className="w-64 rounded-lg border px-3 py-2 text-sm"
+                  disabled={busy}
+                />
+                <button
+                  onClick={runTestMasterAnalysisOneLawyer}
+                  disabled={busy}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {busy ? 'Working...' : 'Test Master (1 Lawyer/Judge)'}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="text-sm font-semibold text-slate-900">Worker Command Log</div>
+                <button
+                  onClick={() => setTestDebugLog('')}
+                  disabled={busy || !testDebugLog}
+                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              </div>
+              <textarea
+                value={testDebugLog}
+                readOnly
+                placeholder="Commands and JSON results from each worker step will appear here."
+                className="w-full min-h-[220px] rounded-lg border bg-slate-50 p-3 font-mono text-xs text-slate-800"
+              />
+            </div>
           </div>
 
           <div className="rounded-lg border bg-white p-6">

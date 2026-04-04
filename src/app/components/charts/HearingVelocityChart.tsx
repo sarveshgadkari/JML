@@ -18,9 +18,11 @@ type Row = { bucket: string; cases: number };
 export default function HearingVelocityChart({
   data,
   tribunalAvg = 6,
+  loading = false,
 }: {
   data?: Row[];
   tribunalAvg?: number;
+  loading?: boolean;
 }) {
   const rows = useMemo<Row[]>(() => data ?? [], [data]);
 
@@ -29,7 +31,7 @@ export default function HearingVelocityChart({
       <ResponsiveContainer width="100%" height={300}>
         {rows.length === 0 ? (
           <div className="h-full w-full flex items-center justify-center text-sm text-[#5f6368]">
-            No hearing-volume data for this lawyer.
+            {loading ? "loading please wait" : "No hearing-volume data for this lawyer."}
           </div>
         ) : (
         <BarChart data={rows} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>

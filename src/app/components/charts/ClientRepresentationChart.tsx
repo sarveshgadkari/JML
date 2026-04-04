@@ -11,15 +11,18 @@ export default function ClientRepresentationChart({
   data?: Slice[];
 }) {
   const safeData = data ?? [];
-  const homebuyerPct = Math.round(
-    (safeData.find((d) => d.name.toLowerCase().includes("homebuyer"))?.value ?? 0)
+  const complainantCases = Math.round(
+    safeData.find((d) => d.name.toLowerCase().includes("complainant"))?.value ?? 0
   );
+  const respondentCases = Math.round(safeData.find((d) => d.name.toLowerCase().includes("respondent"))?.value ?? 0);
+  const totalSide = complainantCases + respondentCases;
+  const complainantPct = totalSide > 0 ? Math.round((complainantCases * 100) / totalSide) : 0;
 
   return (
     <div className="relative h-[300px] w-full">
       <div className="text-center text-sm font-semibold text-slate-900 mb-2">
-        {homebuyerPct}% Homebuyer Focus{" "}
-        <span className="text-slate-600 font-medium">• MahaRERA appearances</span>
+        {complainantCases} complainant • {respondentCases} respondent{" "}
+        <span className="text-slate-600 font-medium">({complainantPct}% complainant)</span>
       </div>
       {safeData.length === 0 ? (
         <div className="mt-10 flex items-center justify-center text-sm text-[#5f6368]">
@@ -36,8 +39,8 @@ export default function ClientRepresentationChart({
 
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
         <div className="text-center">
-          <div className="text-sm font-semibold text-slate-900">{homebuyerPct}%</div>
-          <div className="mt-0.5 text-xs text-slate-600 font-medium">Homebuyers</div>
+          <div className="text-sm font-semibold text-slate-900">{totalSide}</div>
+          <div className="mt-0.5 text-xs text-slate-600 font-medium">Side-tagged cases</div>
         </div>
       </div>
     </div>

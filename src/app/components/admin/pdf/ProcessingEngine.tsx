@@ -173,6 +173,17 @@ export default function ProcessingEngine({
       .in("claimed_by", threadIds)
       .eq("status", "PROCESSING");
   }, []);
+
+  const releaseThreadKeyLeases = useCallback(async (threadIds: string[], cooldownUntil: string | null = null) => {
+    if (threadIds.length === 0) return;
+    const supabase = getSupabase();
+    for (const threadId of threadIds) {
+      await supabase.rpc("release_ai_key_for_thread", {
+        p_thread_id: threadId,
+        p_cooldown_until: cooldownUntil,
+      });
+    }
+  }, []);
   const updateRuntime = useCallback((threadId: string, updater: (prev: RuntimeThreadState) => RuntimeThreadState) => {
     setRuntimeState((prev) => {
       const current = prev[threadId];
@@ -213,51 +224,28 @@ export default function ProcessingEngine({
 
   const fetchReplacementKey = useCallback(async (thread: ThreadCfg) => {
     const supabase = getSupabase();
-    const nowIso = new Date().toISOString();
-    const { data, error } = await supabase
-      .from("ai_keys")
-      .select("id,key_value,status,cooldown_until,daily_usage_count")
-      .eq("provider", thread.provider)
-      .eq("status", "ACTIVE")
-      .or(`cooldown_until.is.null,cooldown_until.lte.${nowIso}`)
-      // Prefer unused keys first (lower daily_usage_count).
-      .order("daily_usage_count", { ascending: true })
-      .limit(1);
+    const state = runtimeState[thread.id];
+    const { data, error } = await supabase.rpc("claim_ai_key_for_thread", {
+      p_provider: thread.provider,
+      p_thread_id: thread.id,
+      p_exclude_key_id: state?.assignedKeyId ?? null,
+    });
     if (error) throw error;
-    return (data || [])[0] as any;
-  }, []);
+    return data as any;
+  }, [runtimeState]);
 
   const rotateThreadKey = useCallback(async (thread: ThreadCfg, reason: string, shouldCooldownCurrentKey: boolean) => {
     const state = runtimeState[thread.id];
-    const supabase = getSupabase();
-    if (state?.assignedKeyId && shouldCooldownCurrentKey) {
-      await supabase
-        .from("ai_keys")
-        .update({
-          status: "COOLDOWN",
-          cooldown_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        })
-        .eq("id", state.assignedKeyId);
-    }
+    const cooldownUntil = shouldCooldownCurrentKey ? new Date(Date.now() + 3 * 60 * 1000).toISOString() : null;
 
     // Try to avoid reselecting the same key.
     let replacement = await fetchReplacementKey(thread);
-    if (replacement?.id && state?.assignedKeyId && replacement.id === state.assignedKeyId) {
-      const nowIso = new Date().toISOString();
-      const { data, error } = await supabase
-        .from("ai_keys")
-        .select("id,key_value,status,cooldown_until,daily_usage_count")
-        .eq("provider", thread.provider)
-        .eq("status", "ACTIVE")
-        .or(`cooldown_until.is.null,cooldown_until.lte.${nowIso}`)
-        .neq("id", state.assignedKeyId)
-        .order("daily_usage_count", { ascending: true })
-        .limit(1);
-      if (error) throw error;
-      replacement = (data || [])[0] as any;
-    }
     if (!replacement) {
       throw new Error(`No active replacement key available for ${thread.provider}.`);
+    }
+
+    if (state?.assignedKeyId) {
+      await releaseThreadKeyLeases([thread.id], cooldownUntil);
     }
 
     await persistThreadState(thread.id, {
@@ -278,9 +266,9 @@ export default function ProcessingEngine({
     }));
 
     log(
-      `${threadPrefix(thread, state)} 🚨 Rotating API Key.${shouldCooldownCurrentKey ? " Cool-down initiated for 24h." : ""} ${reason}`
+      `${threadPrefix(thread, state)} 🚨 Rotating API Key.${shouldCooldownCurrentKey ? " Cool-down initiated for 3m." : ""} ${reason}`
     );
-  }, [fetchReplacementKey, log, persistThreadState, runtimeState, updateRuntime]);
+  }, [fetchReplacementKey, log, persistThreadState, releaseThreadKeyLeases, runtimeState, updateRuntime]);
 
   // Count every AI request/batch attempt towards RPD (per API key).
   const markAiAttempt = useCallback(async (thread: ThreadCfg) => {
@@ -302,7 +290,7 @@ export default function ProcessingEngine({
       const supabase = getSupabase();
       await supabase
         .from("ai_keys")
-        .update({ daily_usage_count: nextUsage, status: "ACTIVE", cooldown_until: null })
+        .update({ daily_usage_count: nextUsage })
         .eq("id", assignedKeyId);
     }
   }, [updateRuntime]);
@@ -708,9 +696,10 @@ export default function ProcessingEngine({
         worker_last_seen_at: new Date().toISOString(),
         worker_current_batch_count: 0,
       });
+      void releaseThreadKeyLeases([thread.id], null);
       updateRuntime(thread.id, (prev) => ({ ...prev, isWorking: false, currentBatchClaimed: 0 }));
     }
-  }, [handleThreadError, log, persistWorkerRuntime, popupMode, processBatchWithGemini, processOnePdf, releaseClaimedRows, rotateThreadKey, runtimeState, updateRuntime]);
+  }, [handleThreadError, log, persistWorkerRuntime, popupMode, processBatchWithGemini, processOnePdf, releaseClaimedRows, releaseThreadKeyLeases, rotateThreadKey, runtimeState, updateRuntime]);
 
   const startAllWorkers = useCallback(async () => {
     if (activeThreads.length === 0) return;
@@ -821,6 +810,7 @@ export default function ProcessingEngine({
         activeThreads.map((thread) => thread.id),
         "Session shutdown: reverted claimed PDFs to pending"
       );
+      void releaseThreadKeyLeases(activeThreads.map((thread) => thread.id), null);
     };
 
     window.addEventListener("beforeunload", handleUnload);
@@ -831,10 +821,11 @@ export default function ProcessingEngine({
           activeThreads.map((thread) => thread.id),
           "Session shutdown: reverted claimed PDFs to pending"
         );
+        void releaseThreadKeyLeases(activeThreads.map((thread) => thread.id), null);
       }
       runRef.current = false;
     };
-  }, [activeThreads, releaseThreadClaims]);
+  }, [activeThreads, releaseThreadClaims, releaseThreadKeyLeases]);
 
   return (
     <div className="rounded-xl border bg-white p-4 space-y-3">

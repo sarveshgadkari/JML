@@ -107,9 +107,20 @@ export default function ResultReview() {
 
   // Columns we expect in JSON
   const columns = [
-    "complaint_number","case_title","judge","court","court_type",
-    "outcome","status","filing_date","judgement_date",
-    "petitioner_lawyers","respondent_lawyers","total_hearings","judgement_link"
+    "complaint_number",
+    "case_title",
+    "case_type",
+    "judges",
+    "court",
+    "court_type",
+    "outcome",
+    "status",
+    "filing_date",
+    "judgement_date",
+    "petitioner_lawyers",
+    "respondent_lawyers",
+    "total_hearings",
+    "judgement_link",
   ];
 
   return (
@@ -157,15 +168,26 @@ export default function ResultReview() {
                     <input type="checkbox" checked={!!r.verified} onChange={(e) => toggleVerified(r.id, e.target.checked)} />
                   </td>
                   <td className="px-3 py-2">{fname}</td>
-                  {columns.map((c) => (
+                  {columns.map((c) => {
+                    const cellRaw =
+                      obj?.[c] ??
+                      (c === "judges" && obj?.judge != null ? obj.judge : undefined);
+                    const display =
+                      typeof cellRaw === "string"
+                        ? cellRaw
+                        : Array.isArray(cellRaw)
+                          ? JSON.stringify(cellRaw)
+                          : cellRaw ?? "";
+                    return (
                     <td key={c} className="px-2 py-1 min-w-[180px]">
                       <input
-                        value={typeof obj?.[c] === "string" ? obj[c] : Array.isArray(obj?.[c]) ? JSON.stringify(obj[c]) : obj?.[c] ?? ""}
+                        value={display}
                         onChange={(e) => updateCell(r.id, idx, c, e.target.value)}
                         className="w-full border rounded px-2 py-1"
                       />
                     </td>
-                  ))}
+                    );
+                  })}
                 </tr>
               ));
             })}

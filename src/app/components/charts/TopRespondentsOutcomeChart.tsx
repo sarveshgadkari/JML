@@ -5,14 +5,14 @@ import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAx
 
 type Row = { name: string; cases: number; won: number; lost: number; settled: number };
 
-export default function TopRespondentsOutcomeChart({ data }: { data?: Row[] }) {
+export default function TopRespondentsOutcomeChart({ data, loading = false }: { data?: Row[]; loading?: boolean }) {
   const rows = useMemo<Row[]>(() => (data ?? []).map((r) => ({ ...r })), [data]);
   return (
     <div className="h-[300px] w-full">
       <ResponsiveContainer width="100%" height={300}>
         {rows.length === 0 ? (
           <div className="h-full w-full flex items-center justify-center text-sm text-[#5f6368]">
-            No respondent outcome data.
+            {loading ? "loading please wait" : "No respondent outcome data."}
           </div>
         ) : (
           <BarChart data={rows} layout="vertical" margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>

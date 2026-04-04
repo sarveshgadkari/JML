@@ -53,6 +53,90 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
     favor_respondent_rate: number | string | null;
     settlement_rate: number | string | null;
     avg_case_duration_days: number | string | null;
+    chart_hearings_1_cases?: number | string | null;
+    chart_hearings_2_3_cases?: number | string | null;
+    chart_hearings_4_5_cases?: number | string | null;
+    chart_hearings_5_plus_cases?: number | string | null;
+    chart_top_lawyer_1_name?: string | null;
+    chart_top_lawyer_1_cases?: number | string | null;
+    chart_top_lawyer_1_won?: number | string | null;
+    chart_top_lawyer_1_lost?: number | string | null;
+    chart_top_lawyer_1_settled?: number | string | null;
+    chart_top_lawyer_1_win_rate?: number | string | null;
+    chart_top_lawyer_2_name?: string | null;
+    chart_top_lawyer_2_cases?: number | string | null;
+    chart_top_lawyer_2_won?: number | string | null;
+    chart_top_lawyer_2_lost?: number | string | null;
+    chart_top_lawyer_2_settled?: number | string | null;
+    chart_top_lawyer_2_win_rate?: number | string | null;
+    chart_top_lawyer_3_name?: string | null;
+    chart_top_lawyer_3_cases?: number | string | null;
+    chart_top_lawyer_3_won?: number | string | null;
+    chart_top_lawyer_3_lost?: number | string | null;
+    chart_top_lawyer_3_settled?: number | string | null;
+    chart_top_lawyer_3_win_rate?: number | string | null;
+    chart_top_lawyer_4_name?: string | null;
+    chart_top_lawyer_4_cases?: number | string | null;
+    chart_top_lawyer_4_won?: number | string | null;
+    chart_top_lawyer_4_lost?: number | string | null;
+    chart_top_lawyer_4_settled?: number | string | null;
+    chart_top_lawyer_4_win_rate?: number | string | null;
+    chart_top_lawyer_5_name?: string | null;
+    chart_top_lawyer_5_cases?: number | string | null;
+    chart_top_lawyer_5_won?: number | string | null;
+    chart_top_lawyer_5_lost?: number | string | null;
+    chart_top_lawyer_5_settled?: number | string | null;
+    chart_top_lawyer_5_win_rate?: number | string | null;
+    chart_top_respondent_1_name?: string | null;
+    chart_top_respondent_1_cases?: number | string | null;
+    chart_top_respondent_1_won?: number | string | null;
+    chart_top_respondent_1_lost?: number | string | null;
+    chart_top_respondent_1_settled?: number | string | null;
+    chart_top_respondent_1_win_rate?: number | string | null;
+    chart_top_respondent_1_loss_rate?: number | string | null;
+    chart_top_respondent_1_settlement_rate?: number | string | null;
+    chart_top_respondent_2_name?: string | null;
+    chart_top_respondent_2_cases?: number | string | null;
+    chart_top_respondent_2_won?: number | string | null;
+    chart_top_respondent_2_lost?: number | string | null;
+    chart_top_respondent_2_settled?: number | string | null;
+    chart_top_respondent_2_win_rate?: number | string | null;
+    chart_top_respondent_2_loss_rate?: number | string | null;
+    chart_top_respondent_2_settlement_rate?: number | string | null;
+    chart_top_respondent_3_name?: string | null;
+    chart_top_respondent_3_cases?: number | string | null;
+    chart_top_respondent_3_won?: number | string | null;
+    chart_top_respondent_3_lost?: number | string | null;
+    chart_top_respondent_3_settled?: number | string | null;
+    chart_top_respondent_3_win_rate?: number | string | null;
+    chart_top_respondent_3_loss_rate?: number | string | null;
+    chart_top_respondent_3_settlement_rate?: number | string | null;
+    chart_top_respondent_4_name?: string | null;
+    chart_top_respondent_4_cases?: number | string | null;
+    chart_top_respondent_4_won?: number | string | null;
+    chart_top_respondent_4_lost?: number | string | null;
+    chart_top_respondent_4_settled?: number | string | null;
+    chart_top_respondent_4_win_rate?: number | string | null;
+    chart_top_respondent_4_loss_rate?: number | string | null;
+    chart_top_respondent_4_settlement_rate?: number | string | null;
+    chart_top_respondent_5_name?: string | null;
+    chart_top_respondent_5_cases?: number | string | null;
+    chart_top_respondent_5_won?: number | string | null;
+    chart_top_respondent_5_lost?: number | string | null;
+    chart_top_respondent_5_settled?: number | string | null;
+    chart_top_respondent_5_win_rate?: number | string | null;
+    chart_top_respondent_5_loss_rate?: number | string | null;
+    chart_top_respondent_5_settlement_rate?: number | string | null;
+    chart_top_duration_lawyer_1_name?: string | null;
+    chart_top_duration_lawyer_1_avg_days?: number | string | null;
+    chart_top_duration_lawyer_2_name?: string | null;
+    chart_top_duration_lawyer_2_avg_days?: number | string | null;
+    chart_top_duration_lawyer_3_name?: string | null;
+    chart_top_duration_lawyer_3_avg_days?: number | string | null;
+    chart_top_duration_lawyer_4_name?: string | null;
+    chart_top_duration_lawyer_4_avg_days?: number | string | null;
+    chart_top_duration_lawyer_5_name?: string | null;
+    chart_top_duration_lawyer_5_avg_days?: number | string | null;
   } | null;
   type LjaRow = {
     lawyer_name: string | null;
@@ -69,7 +153,7 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
   const [hearingVelocityData, setHearingVelocityData] = React.useState<Array<{ bucket: string; cases: number }>>([]);
   const [topOpponentsData, setTopOpponentsData] = React.useState<Array<{ name: string; cases: number; winRate: number }>>([]);
   const [reraResolutionData, setReraResolutionData] = React.useState<Array<{ year: string; refund: number; possession: number; conciliation: number; dismissed: number }>>([]);
-  const [topOpponentLawyers, setTopOpponentLawyers] = React.useState<Array<{ name: string; cases: number; won: number; lost: number; settled: number }>>([]);
+  const [topOpponentLawyers, setTopOpponentLawyers] = React.useState<Array<{ name: string; cases: number; winRate: number; lossRate: number; settlementRate: number }>>([]);
   const [respondentBars, setRespondentBars] = React.useState<Array<{ label: string; value: number }>>([]);
   const [avgDurationTopLawyers, setAvgDurationTopLawyers] = React.useState<Array<{ name: string; avgDays: number }>>([]);
   const [respondentOutcomeRows, setRespondentOutcomeRows] = React.useState<Array<{ name: string; cases: number; won: number; lost: number; settled: number }>>([]);
@@ -81,6 +165,18 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
     avgDays: 0,
     avgHearings: 6,
   });
+  const [detailedCaseRows, setDetailedCaseRows] = React.useState<
+    Array<{
+      case_number: string;
+      case_title: string | null;
+      complainant_lawyer: string | null;
+      respondent_lawyer: string | null;
+      outcome: string | null;
+    }>
+  >([]);
+  const [visibleCaseCount, setVisibleCaseCount] = React.useState(20);
+  const [isLoadingAnalytics, setIsLoadingAnalytics] = React.useState(true);
+  const [isLoadingDetails, setIsLoadingDetails] = React.useState(true);
 
   const normalizePersonName = (value: string | null | undefined) =>
     String(value ?? "")
@@ -93,8 +189,35 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
       .replace(/\s+/g, " ")
       .trim();
 
+  const buildSelfRepresentedLawyerName = (
+    courtName: string | null | undefined,
+    side: "Complainant" | "Respondent"
+  ) => `${String(courtName ?? "").trim() || "Unknown Court"} ${side} without a lawyer`;
+
+  const uniqueNonEmpty = (values: Array<string | null | undefined>) => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const value of values) {
+      const v = String(value ?? "").trim();
+      if (!v) continue;
+      const key = normalizePersonName(v);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(v);
+    }
+    return out;
+  };
+
+  const toNum = (value: number | string | null | undefined) => {
+    const n = Number(value ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  };
+
   React.useEffect(() => {
     (async () => {
+      setVisibleCaseCount(20);
+      setIsLoadingAnalytics(true);
+      setIsLoadingDetails(true);
       const supabase = getSupabase();
       // Load judge basic info
       const { data: jRaw } = await supabase.from("judges").select("name").eq("id", judgeId).maybeSingle();
@@ -108,21 +231,34 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
 
       // Load cases for analytics from master table using canonical name matching across judge_1..9.
       const canonicalJudgeName = normalizePersonName(judgeName);
-      const { data: allCases } = await supabase
-        .from("cases")
-        .select([
-          "case_number",
-          "case_title",
-          "case_type",
-          "court_name",
-          "judge_1","judge_2","judge_3","judge_4","judge_5","judge_6","judge_7","judge_8","judge_9",
-          "filing_date","judgment_date","status","outcome",
-          "petitioner_lawyer_1","petitioner_lawyer_2","petitioner_lawyer_3","petitioner_lawyer_4","petitioner_lawyer_5",
-          "respondent_lawyer_1","respondent_lawyer_2","respondent_lawyer_3","respondent_lawyer_4","respondent_lawyer_5",
-          "total_hearings"
-        ].join(","))
-        .limit(40000);
-      const rows: CaseRow[] = ((allCases as CaseRow[] | null) ?? []).filter((row) => {
+      const allCases: CaseRow[] = [];
+      const pageSize = 1000;
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from("cases_analytics")
+          .select([
+            "case_number",
+            "case_title",
+            "case_type",
+            "court_name",
+            "judge_1","judge_2","judge_3","judge_4","judge_5","judge_6","judge_7","judge_8","judge_9",
+            "filing_date","judgment_date","status","outcome",
+            "petitioner_lawyer_1","petitioner_lawyer_2","petitioner_lawyer_3","petitioner_lawyer_4","petitioner_lawyer_5",
+            "respondent_lawyer_1","respondent_lawyer_2","respondent_lawyer_3","respondent_lawyer_4","respondent_lawyer_5",
+            "total_hearings",
+            "updated_at"
+          ].join(","))
+          .order("updated_at", { ascending: false })
+          .range(from, from + pageSize - 1);
+        if (error) throw error;
+        const chunk = (data as CaseRow[] | null) ?? [];
+        allCases.push(...chunk);
+        if (chunk.length < pageSize) break;
+        from += pageSize;
+      }
+
+      const rows: CaseRow[] = allCases.filter((row) => {
         const judges = [
           row.judge_1, row.judge_2, row.judge_3, row.judge_4, row.judge_5,
           row.judge_6, row.judge_7, row.judge_8, row.judge_9,
@@ -216,52 +352,134 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
         setBases(prev => ({ ...prev, client: buyers + builders }));
       }
 
-      // 2) Hearings per Case: bucket total_hearings into 1, 2-3, 4-5, 5+
-      const buckets = { "1": 0, "2-3": 0, "4-5": 0, "5+": 0 } as Record<string, number>;
-      let hearingsBase = 0;
-      rows.forEach(r => {
-        const h = Number(r.total_hearings ?? 0);
-        if (!Number.isFinite(h) || h <= 0) return;
-        hearingsBase += 1;
-        if (h === 1) buckets["1"] += 1;
-        else if (h <= 3) buckets["2-3"] += 1;
-        else if (h <= 5) buckets["4-5"] += 1;
-        else buckets["5+"] += 1;
-      });
-      setHearingVelocityData([
-        { bucket: "1", cases: buckets["1"] },
-        { bucket: "2-3", cases: buckets["2-3"] },
-        { bucket: "4-5", cases: buckets["4-5"] },
-        { bucket: "5+", cases: buckets["5+"] },
-      ]);
-      setBases(prev => ({ ...prev, hearings: hearingsBase }));
+      // 2) Hearings per Case: use persisted judge_analytics chart buckets when available.
+      const persistedHearings = {
+        "1": toNum(ja?.chart_hearings_1_cases),
+        "2-3": toNum(ja?.chart_hearings_2_3_cases),
+        "4-5": toNum(ja?.chart_hearings_4_5_cases),
+        "5+": toNum(ja?.chart_hearings_5_plus_cases),
+      };
+      const persistedHearingsBase =
+        persistedHearings["1"] +
+        persistedHearings["2-3"] +
+        persistedHearings["4-5"] +
+        persistedHearings["5+"];
+      if (persistedHearingsBase > 0) {
+        setHearingVelocityData([
+          { bucket: "1", cases: persistedHearings["1"] },
+          { bucket: "2-3", cases: persistedHearings["2-3"] },
+          { bucket: "4-5", cases: persistedHearings["4-5"] },
+          { bucket: "5+", cases: persistedHearings["5+"] },
+        ]);
+        setBases(prev => ({ ...prev, hearings: persistedHearingsBase }));
+      } else {
+        const buckets = { "1": 0, "2-3": 0, "4-5": 0, "5+": 0 } as Record<string, number>;
+        let hearingsBase = 0;
+        rows.forEach(r => {
+          const h = Number(r.total_hearings ?? 0);
+          if (!Number.isFinite(h) || h <= 0) return;
+          hearingsBase += 1;
+          if (h === 1) buckets["1"] += 1;
+          else if (h <= 3) buckets["2-3"] += 1;
+          else if (h <= 5) buckets["4-5"] += 1;
+          else buckets["5+"] += 1;
+        });
+        setHearingVelocityData([
+          { bucket: "1", cases: buckets["1"] },
+          { bucket: "2-3", cases: buckets["2-3"] },
+          { bucket: "4-5", cases: buckets["4-5"] },
+          { bucket: "5+", cases: buckets["5+"] },
+        ]);
+        setBases(prev => ({ ...prev, hearings: hearingsBase }));
+      }
 
       // 3) Top Opponents (for judge page: top lawyers appearing before this judge)
-      // Use lawyer_judge_analytics where judge_id = current
-      const { data: ljaRaw } = await supabase
-        .from("lawyer_judge_analytics")
-        .select("lawyer_name,total_cases,won_cases,lost_cases,settled_cases,win_rate,avg_case_duration_days")
-        .eq("judge_id", judgeId)
-        .order("total_cases", { ascending: false })
-        .limit(10);
-      const ljaRows: LjaRow[] = (ljaRaw as LjaRow[] | null) ?? [];
-      const ljaRowsFiltered = ljaRows.filter(r => (r.lawyer_name ?? "").trim() !== "");
-      setTopOpponentsData(
-        ljaRowsFiltered.slice(0, 8).map(r => ({
-          name: String(r.lawyer_name ?? ""),
-          cases: Number(r.total_cases ?? 0),
-          winRate: Number(r.win_rate ?? 0),
-        }))
-      );
-      setTopOpponentLawyers(
-        ljaRowsFiltered.slice(0, 5).map(r => ({
-          name: String(r.lawyer_name ?? ""),
-          cases: Number(r.total_cases ?? 0),
-          won: Number(r.won_cases ?? 0),
-          lost: Number(r.lost_cases ?? 0),
-          settled: Number(r.settled_cases ?? 0),
-        }))
-      );
+      const persistedTopLawyers = [1, 2, 3, 4, 5]
+        .map((idx) => {
+          const row = ja as Record<string, unknown> | null;
+          const name = String(row?.[`chart_top_lawyer_${idx}_name`] ?? "").trim();
+          if (!name) return null;
+          return {
+            name,
+            cases: toNum(row?.[`chart_top_lawyer_${idx}_cases`] as number | string | null | undefined),
+            won: toNum(row?.[`chart_top_lawyer_${idx}_won`] as number | string | null | undefined),
+            lost: toNum(row?.[`chart_top_lawyer_${idx}_lost`] as number | string | null | undefined),
+            settled: toNum(row?.[`chart_top_lawyer_${idx}_settled`] as number | string | null | undefined),
+            winRate: toNum(row?.[`chart_top_lawyer_${idx}_win_rate`] as number | string | null | undefined),
+            lossRate: toNum(row?.[`chart_top_lawyer_${idx}_loss_rate`] as number | string | null | undefined),
+            settlementRate: toNum(row?.[`chart_top_lawyer_${idx}_settlement_rate`] as number | string | null | undefined),
+          };
+        })
+        .filter((v): v is { name: string; cases: number; won: number; lost: number; settled: number; winRate: number; lossRate: number; settlementRate: number } => !!v);
+
+      let ljaRowsFiltered: LjaRow[] = [];
+      if (persistedTopLawyers.length > 0) {
+        setTopOpponentsData(
+          persistedTopLawyers.map((r) => {
+            // Some rows may have counts but zeroed rates; derive rates from counts in that case.
+            const base = Math.max(r.won + r.lost + r.settled, r.cases, 1);
+            const winRate = r.winRate > 0 ? r.winRate : (r.won / base) * 100;
+            return {
+              name: r.name,
+              cases: r.cases,
+              winRate: Math.round(winRate * 100) / 100,
+            };
+          })
+        );
+        setTopOpponentLawyers(
+          persistedTopLawyers.map((r) => {
+            // Some rows may have counts but zeroed rates; derive rates from counts in that case.
+            const base = Math.max(r.won + r.lost + r.settled, r.cases, 1);
+            const winRate = r.winRate > 0 ? r.winRate : (r.won / base) * 100;
+            const lossRate = r.lossRate > 0 ? r.lossRate : (r.lost / base) * 100;
+            const settlementRate = r.settlementRate > 0 ? r.settlementRate : (r.settled / base) * 100;
+            return {
+              name: r.name,
+              cases: r.cases,
+              winRate: Math.round(winRate * 100) / 100,
+              lossRate: Math.round(lossRate * 100) / 100,
+              settlementRate: Math.round(settlementRate * 100) / 100,
+            };
+          })
+        );
+        setBases((prev) => ({ ...prev, opponents: persistedTopLawyers.reduce((acc, r) => acc + r.cases, 0) }));
+      } else {
+        // Fallback: use lawyer_judge_analytics where judge_id = current
+        const { data: ljaRaw } = await supabase
+          .from("lawyer_judge_analytics")
+          .select("lawyer_name,total_cases,won_cases,lost_cases,settled_cases,win_rate,avg_case_duration_days")
+          .eq("judge_id", judgeId)
+          .order("total_cases", { ascending: false })
+          .limit(10);
+        const ljaRows: LjaRow[] = (ljaRaw as LjaRow[] | null) ?? [];
+        ljaRowsFiltered = ljaRows.filter(r => (r.lawyer_name ?? "").trim() !== "");
+        setTopOpponentsData(
+          ljaRowsFiltered.slice(0, 8).map(r => ({
+            name: String(r.lawyer_name ?? ""),
+            cases: Number(r.total_cases ?? 0),
+            winRate: Number(r.win_rate ?? 0),
+          }))
+        );
+        setTopOpponentLawyers(
+          ljaRowsFiltered.slice(0, 5).map(r => {
+            const cases = Number(r.total_cases ?? 0);
+            const won = Number(r.won_cases ?? 0);
+            const lost = Number(r.lost_cases ?? 0);
+            const settled = Number(r.settled_cases ?? 0);
+            const base = Math.max(won + lost + settled, cases, 1);
+            const winRate = Number(r.win_rate ?? 0);
+            const normalizedWinRate = Number.isFinite(winRate) && winRate > 0 ? winRate : (won / base) * 100;
+            return {
+              name: String(r.lawyer_name ?? ""),
+              cases,
+              winRate: Math.round(normalizedWinRate * 100) / 100,
+              lossRate: Math.round(((lost / base) * 100) * 100) / 100,
+              settlementRate: Math.round(((settled / base) * 100) * 100) / 100,
+            };
+          })
+        );
+        setBases((prev) => ({ ...prev, opponents: ljaRowsFiltered.slice(0, 8).reduce((acc, r) => acc + Number(r.total_cases ?? 0), 0) }));
+      }
 
       // Respondent chart (two bars: complainant vs respondent share)
       const compRate = ja ? Number(ja.favor_complainant_rate ?? 0) : Number.isFinite(metrics.favorComplainant) ? metrics.favorComplainant : 0;
@@ -271,79 +489,137 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
         { label: "Respondent", value: Math.round(respRate) },
       ]);
 
-      // Average case duration with Top Lawyers (by appearance count, show avg days)
-      const avgDur = ljaRowsFiltered
-        .map(r => ({ name: String(r.lawyer_name ?? ""), avgDays: Math.round(Number(r.avg_case_duration_days ?? 0)) }))
-        .sort((a, b) => b.avgDays - a.avgDays)
-        .slice(0, 8);
-      setAvgDurationTopLawyers(avgDur);
-      // Use duration_count sum across selected lawyers if present for base
-      const { data: ljaForDuration } = await supabase
-        .from("lawyer_judge_analytics")
-        .select("lawyer_name,duration_count")
-        .eq("judge_id", judgeId);
-      const mapCount = new Map<string, number>();
-      (ljaForDuration ?? []).forEach((r: any) => mapCount.set(String(r.lawyer_name ?? ""), Number(r.duration_count ?? 0)));
-      const durationBase = avgDur.reduce((acc, r) => acc + (mapCount.get(r.name) ?? 0), 0);
-      setBases(prev => ({ ...prev, duration: durationBase }));
+      // Average case duration with Top Lawyers: prefer persisted chart fields.
+      const persistedDuration = [1, 2, 3, 4, 5]
+        .map((idx) => {
+          const row = ja as Record<string, unknown> | null;
+          const name = String(row?.[`chart_top_duration_lawyer_${idx}_name`] ?? "").trim();
+          if (!name) return null;
+          return {
+            name,
+            avgDays: Math.round(toNum(row?.[`chart_top_duration_lawyer_${idx}_avg_days`] as number | string | null | undefined)),
+          };
+        })
+        .filter((v): v is { name: string; avgDays: number } => !!v);
+      if (persistedDuration.length > 0) {
+        setAvgDurationTopLawyers(persistedDuration);
+        setBases(prev => ({ ...prev, duration: toNum(ja?.total_cases) }));
+      } else {
+        if (ljaRowsFiltered.length === 0) {
+          const { data: ljaRaw } = await supabase
+            .from("lawyer_judge_analytics")
+            .select("lawyer_name,total_cases,won_cases,lost_cases,settled_cases,win_rate,avg_case_duration_days")
+            .eq("judge_id", judgeId)
+            .order("total_cases", { ascending: false })
+            .limit(10);
+          const ljaRows: LjaRow[] = (ljaRaw as LjaRow[] | null) ?? [];
+          ljaRowsFiltered = ljaRows.filter(r => (r.lawyer_name ?? "").trim() !== "");
+        }
+        const avgDur = ljaRowsFiltered
+          .map(r => ({ name: String(r.lawyer_name ?? ""), avgDays: Math.round(Number(r.avg_case_duration_days ?? 0)) }))
+          .sort((a, b) => b.avgDays - a.avgDays)
+          .slice(0, 5);
+        setAvgDurationTopLawyers(avgDur);
+        // Use duration_count sum across selected lawyers if present for base
+        const { data: ljaForDuration } = await supabase
+          .from("lawyer_judge_analytics")
+          .select("lawyer_name,duration_count")
+          .eq("judge_id", judgeId);
+        const mapCount = new Map<string, number>();
+        (ljaForDuration ?? []).forEach((r: any) => mapCount.set(String(r.lawyer_name ?? ""), Number(r.duration_count ?? 0)));
+        const durationBase = avgDur.reduce((acc, r) => acc + (mapCount.get(r.name) ?? 0), 0);
+        setBases(prev => ({ ...prev, duration: durationBase }));
+      }
 
       // Top Respondents Outcome (derive respondents from case_title RHS of 'vs' and outcome from cases)
-      const respMap = new Map<string, { name: string; cases: number; won: number; lost: number; settled: number }>();
-      const norm = (s: string) => s.replace(/\s+/g, " ").replace(/[^\w&.,/() -]/g, "").trim();
-      const splitRespondents = (s: string) => {
-        // split on common separators
-        return s
-          .split(/\s*&\s*|\s*,\s*|\s+and\s+/i)
-          .map(part => norm(part))
-          .filter(Boolean);
-      };
-      const outcomeOf = (o?: string | null) => {
-        const s = (o ?? "").toLowerCase();
-        if (s.includes("in favor of complainant")) return "complainant";
-        if (s.includes("in favour of complainant")) return "complainant";
-        if (s.includes("in favor of respondent")) return "respondent";
-        if (s.includes("in favour of respondent")) return "respondent";
-        if (s.includes("settle") || s.includes("conciliation") || s.includes("consent")) return "settled";
-        return "other";
-      };
-      const inc = (key: string, kind: "complainant" | "respondent" | "settled" | "other") => {
-        if (!key) return;
-        const k = key.trim();
-        if (!k) return;
-        const cur = respMap.get(k) ?? { name: k, cases: 0, won: 0, lost: 0, settled: 0 };
-        cur.cases += 1;
-        if (kind === "respondent") cur.won += 1; // respondent (builder) won
-        else if (kind === "complainant") cur.lost += 1; // respondent lost
-        else if (kind === "settled") cur.settled += 1;
-        respMap.set(k, cur);
-      };
-      rows.forEach(r => {
-        const res = outcomeOf(r.outcome);
-        const title = r.case_title ?? "";
-        const m = title.split(/vs\.?|v\/s\.?|versus/i);
-        if (m.length >= 2) {
-          const rhs = norm(m[1]);
-          const entities = splitRespondents(rhs);
-          entities.forEach(ent => inc(ent, res as any));
-        }
-      });
-      const respArr = Array.from(respMap.values())
-        .filter(r => r.name.toLowerCase() !== "none" && r.name.trim() !== "")
-        .sort((a, b) => b.cases - a.cases)
-        .slice(0, 8);
-      // Convert counts to percentages so stacks sum to 100 for each respondent
-      const respPct = respArr.map(r => {
-        const base = Math.max(r.won + r.lost + r.settled, 1);
-        return {
+      const persistedRespondents = [1, 2, 3, 4, 5]
+        .map((idx) => {
+          const row = ja as Record<string, unknown> | null;
+          const name = String(row?.[`chart_top_respondent_${idx}_name`] ?? "").trim();
+          if (!name) return null;
+          const wonCount = toNum(row?.[`chart_top_respondent_${idx}_won`] as number | string | null | undefined);
+          const lostCount = toNum(row?.[`chart_top_respondent_${idx}_lost`] as number | string | null | undefined);
+          const settledCount = toNum(row?.[`chart_top_respondent_${idx}_settled`] as number | string | null | undefined);
+          const winRate = toNum(row?.[`chart_top_respondent_${idx}_win_rate`] as number | string | null | undefined);
+          const lossRate = toNum(row?.[`chart_top_respondent_${idx}_loss_rate`] as number | string | null | undefined);
+          const settlementRate = toNum(row?.[`chart_top_respondent_${idx}_settlement_rate`] as number | string | null | undefined);
+          const cases = toNum(row?.[`chart_top_respondent_${idx}_cases`] as number | string | null | undefined);
+          const hasRateSignal = (winRate + lossRate + settlementRate) > 0;
+          const base = Math.max(wonCount + lostCount + settledCount, cases, 1);
+          const won = hasRateSignal ? winRate : (wonCount / base) * 100;
+          const lost = hasRateSignal ? lossRate : (lostCount / base) * 100;
+          const settled = hasRateSignal ? settlementRate : (settledCount / base) * 100;
+          return { name, cases, won, lost, settled };
+        })
+        .filter((v): v is { name: string; cases: number; won: number; lost: number; settled: number } => !!v);
+      if (persistedRespondents.length > 0) {
+        const respPct = persistedRespondents.map((r) => ({
           name: r.name,
           cases: r.cases,
-          won: Math.round((r.won / base) * 100),
-          lost: Math.round((r.lost / base) * 100),
-          settled: Math.round((r.settled / base) * 100),
+          won: Math.round(r.won),
+          lost: Math.round(r.lost),
+          settled: Math.round(r.settled),
+        }));
+        setRespondentOutcomeRows(respPct);
+        setBases((prev) => ({ ...prev, respondents: persistedRespondents.reduce((acc, r) => acc + r.cases, 0) }));
+      } else {
+        const respMap = new Map<string, { name: string; cases: number; won: number; lost: number; settled: number }>();
+        const norm = (s: string) => s.replace(/\s+/g, " ").replace(/[^\w&.,/() -]/g, "").trim();
+        const splitRespondents = (s: string) => {
+          // split on common separators
+          return s
+            .split(/\s*&\s*|\s*,\s*|\s+and\s+/i)
+            .map(part => norm(part))
+            .filter(Boolean);
         };
-      });
-      setRespondentOutcomeRows(respPct);
-      setBases(prev => ({ ...prev, respondents: respArr.reduce((acc, r) => acc + (r.won + r.lost + r.settled), 0) }));
+        const outcomeOf = (o?: string | null) => {
+          const s = (o ?? "").toLowerCase();
+          if (s.includes("in favor of complainant")) return "complainant";
+          if (s.includes("in favour of complainant")) return "complainant";
+          if (s.includes("in favor of respondent")) return "respondent";
+          if (s.includes("in favour of respondent")) return "respondent";
+          if (s.includes("settle") || s.includes("conciliation") || s.includes("consent")) return "settled";
+          return "other";
+        };
+        const inc = (key: string, kind: "complainant" | "respondent" | "settled" | "other") => {
+          if (!key) return;
+          const k = key.trim();
+          if (!k) return;
+          const cur = respMap.get(k) ?? { name: k, cases: 0, won: 0, lost: 0, settled: 0 };
+          cur.cases += 1;
+          if (kind === "respondent") cur.won += 1; // respondent (builder) won
+          else if (kind === "complainant") cur.lost += 1; // respondent lost
+          else if (kind === "settled") cur.settled += 1;
+          respMap.set(k, cur);
+        };
+        rows.forEach(r => {
+          const res = outcomeOf(r.outcome);
+          const title = r.case_title ?? "";
+          const m = title.split(/vs\.?|v\/s\.?|versus/i);
+          if (m.length >= 2) {
+            const rhs = norm(m[1]);
+            const entities = splitRespondents(rhs);
+            entities.forEach(ent => inc(ent, res as any));
+          }
+        });
+        const respArr = Array.from(respMap.values())
+          .filter(r => r.name.toLowerCase() !== "none" && r.name.trim() !== "")
+          .sort((a, b) => b.cases - a.cases)
+          .slice(0, 5);
+        // Convert counts to percentages so stacks sum to 100 for each respondent
+        const respPct = respArr.map(r => {
+          const base = Math.max(r.won + r.lost + r.settled, 1);
+          return {
+            name: r.name,
+            cases: r.cases,
+            won: Math.round((r.won / base) * 100),
+            lost: Math.round((r.lost / base) * 100),
+            settled: Math.round((r.settled / base) * 100),
+          };
+        });
+        setRespondentOutcomeRows(respPct);
+        setBases(prev => ({ ...prev, respondents: respArr.reduce((acc, r) => acc + (r.won + r.lost + r.settled), 0) }));
+      }
 
       // 4) RERA Resolution Matrix: stacked per year from cases.outcome/status
       const byYear: Record<string, { refund: number; possession: number; conciliation: number; dismissed: number }> = {};
@@ -368,6 +644,42 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
           dismissed: byYear[y].dismissed,
         }))
       );
+
+      // Load detailed records after hero metrics and chart datasets are prepared.
+      setDetailedCaseRows(
+        rows.map((row) => {
+          const complainantLawyers = uniqueNonEmpty([
+            row.petitioner_lawyer_1,
+            row.petitioner_lawyer_2,
+            row.petitioner_lawyer_3,
+            row.petitioner_lawyer_4,
+            row.petitioner_lawyer_5,
+          ]);
+          const respondentLawyers = uniqueNonEmpty([
+            row.respondent_lawyer_1,
+            row.respondent_lawyer_2,
+            row.respondent_lawyer_3,
+            row.respondent_lawyer_4,
+            row.respondent_lawyer_5,
+          ]);
+
+          return {
+            case_number: row.case_number,
+            case_title: row.case_title ?? null,
+            complainant_lawyer:
+              complainantLawyers.length > 0
+                ? complainantLawyers.join(", ")
+                : buildSelfRepresentedLawyerName(row.court_name ?? null, "Complainant"),
+            respondent_lawyer:
+              respondentLawyers.length > 0
+                ? respondentLawyers.join(", ")
+                : buildSelfRepresentedLawyerName(row.court_name ?? null, "Respondent"),
+            outcome: row.outcome ?? null,
+          };
+        })
+      );
+      setIsLoadingAnalytics(false);
+      setIsLoadingDetails(false);
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [judgeId]);
@@ -447,6 +759,7 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
         <h2 className="font-serif text-2xl text-slate-900">Historical Case Analytics</h2>
       </div>
       <AnalyticsDashboard
+        loading={isLoadingAnalytics}
         caseBase={caseBase.length}
         context="judge"
         clientRepresentationData={clientRepresentationData}
@@ -459,6 +772,66 @@ export default function JudgeDetails({ judgeId }: { judgeId: string }) {
         bases={bases}
         courtAvg={courtAvg}
       />
+
+      <div className="mt-10">
+        <div className="bg-[#1a2332] text-white rounded-t-xl px-4 py-3 font-semibold">DETAILED CASE RECORDS</div>
+        <div className="bg-white border border-[#e0e3e7] rounded-b-xl p-0 overflow-x-auto">
+          <div className="px-4 py-3 text-xs text-slate-600 border-b border-[#eef2f7]">
+            Source proof: complete list from cases_analytics matched by canonical judge-name mapping.
+          </div>
+          <table className="min-w-full text-sm">
+            <thead className="bg-[#f8fafc] text-[#1a2332]">
+              <tr>
+                <th className="px-4 py-2 text-left">Case name</th>
+                <th className="px-4 py-2 text-left">Complainant lawyer</th>
+                <th className="px-4 py-2 text-left">Respondent lawyer</th>
+                <th className="px-4 py-2 text-left">Outcome</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detailedCaseRows.slice(0, visibleCaseCount).map((row) => {
+                const o = (row.outcome ?? "").toLowerCase();
+                const pill = o.includes("settled")
+                  ? "bg-amber-50 text-amber-700 border border-amber-200"
+                  : o.includes("in favor of complainant") || o.includes("complainant")
+                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                    : o.includes("in favor of respondent") || o.includes("respondent")
+                      ? "bg-rose-50 text-rose-700 border border-rose-200"
+                      : "bg-slate-50 text-slate-700 border border-slate-200";
+                return (
+                  <tr key={row.case_number} className="border-t border-[#eef2f7]">
+                    <td className="px-4 py-2">{row.case_title?.trim() || row.case_number}</td>
+                    <td className="px-4 py-2">{row.complainant_lawyer ?? "—"}</td>
+                    <td className="px-4 py-2">{row.respondent_lawyer ?? "—"}</td>
+                    <td className="px-4 py-2">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${pill}`}>
+                        {row.outcome ?? "Pending"}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+              {detailedCaseRows.length === 0 && (
+                <tr>
+                  <td className="px-4 py-4 text-[#5f6368]" colSpan={4}>
+                    {isLoadingDetails ? "loading please wait" : "No case records found for this judge."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          {detailedCaseRows.length > visibleCaseCount && (
+            <div className="p-4 border-t border-[#eef2f7]">
+              <button
+                onClick={() => setVisibleCaseCount((v) => v + 20)}
+                className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
+              >
+                Show more
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

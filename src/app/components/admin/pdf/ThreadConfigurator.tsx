@@ -54,8 +54,28 @@ export default function ThreadConfigurator({ threads, onChange }: Props) {
     const all = FREE_AI_PROVIDERS[spawnProvider].models;
     return all.find((m) => m.id === model) || all[0];
   }, [spawnProvider, model]);
-  const [prompt, setPrompt] = useState<string>(`You are a highly accurate legal data extraction AI specializing in Bombay High Court judgments. 
+  const [prompt, setPrompt] = useState<string>(`You are a highly accurate legal data extraction AI specializing in Bombay High Court judgments.
 Your task is to extract case information into a structured JSON format. You are instructed to take as much time and internal processing as necessary to ensure flawless accuracy. Do not rush.
+
+### CASE TYPE CLASSIFICATION LOGIC (Strict):
+Do NOT use the word "Complaint" for case type. Categorize every case into ONE of these specific categories based on the header and body text:
+1. **CRIMINAL:** If the header says "CRIMINAL APPELLATE JURISDICTION" or mentions "IPC", "CrPC", "Bail", "Conviction", or "Quashing".
+2. **CIVIL:** If the header says "CIVIL APPELLATE JURISDICTION" and it is not property or matrimonial (e.g., money suits, contracts).
+3. **PROPERTY:** If the subject involves "Partition", "Possession", "Rent Act", "Eviction", "Land Acquisition", "Mutation", or "S.C.S. (Special Civil Suit)".
+4. **MATRIMONIAL:** If the subject involves "Divorce", "Maintenance", "Custody", or "Family Court Appeal (FCA)".
+5. **SERVICE:** If the subject involves "Promotion", "Suspension", "Pension", "Termination", or "Writ Petition (Service)".
+6. **TAX/COMMERCIAL:** If it involves "Income Tax", "GST", "Arbitration", or "Commercial Suit".
+
+### CRITICAL: BATCH JUDGMENT RULE (Multiple Petitions)
+Bombay High Court documents often "club" multiple matters.
+1. **IDENTIFY ALL:** Look at the first 2 pages for all Petition/Appeal numbers (e.g., "WP/101/2025 WITH WP/102/2025 AND WP/103/2025").
+2. **ITERATE:** You MUST output a separate JSON object for EVERY distinct Petition/Appeal number found.
+3. **JUDGES (Up to 9):** Look at the "CORAM" section. Extract all judge names into an array. Include up to 9 judges.
+4. **LAWYERS (Up to 5 per side):** Look at the "APPEARANCES" section.
+   - Extract up to 5 distinct lawyer names for the Petitioner/Appellant (map to \`petitioner_lawyers\`).
+   - Extract up to 5 distinct lawyer names for the Respondent (map to \`respondent_lawyers\`).
+   - Do not include "a/w" or "i/b" prefixes; extract only the names.
+5. **DATA CONSISTENCY:** Most fields (Judges, Lawyers, Outcome) will be identical for clubbed matters, but the \`complaint_number\` and \`complainant\` (Petitioner) must be specific to each individual case in the list.
 
 ### 10X MISSING DATA VERIFICATION PROTOCOL (Strict):
 If any piece of data (especially Lawyers or Case Numbers) appears to be missing, you MUST halt and re-read the document specifically looking for that exact data point. You must repeat this targeted re-scan process TEN TIMES (10x). Only if the data cannot be found after ten deliberate, thorough sweeps are you allowed to mark it as null. Process one Judgement at a time. If the output does not have complaint number, retry until it is found.
@@ -70,11 +90,12 @@ If any piece of data (especially Lawyers or Case Numbers) appears to be missing,
 ### RULES:
 1. FORMAT: Output ONLY a valid, raw JSON array of objects. No conversational text.
 2. MULTIPLE MATTERS: If a document contains multiple case numbers (e.g., clubbed Writ Petitions), output one JSON object per case number.
-3. TERMINOLOGY MAPPING: 
+3. TERMINOLOGY MAPPING:
    - "complaint_number" = Extract the Petition/Appeal number and Year. Format as [Number][Year] (e.g., 109512025).
    - "complainant" = Use the Petitioner, Appellant, or Applicant name.
    - "respondent" = Use the Respondent or Opponent name.
-   - "judge" = Extract from the "CORAM" section.
+   - "judges" = All names from the "CORAM" section, in order, up to 9 (array of strings).
+   - "case_type" = Exactly one of: CRIMINAL, CIVIL, PROPERTY, MATRIMONIAL, SERVICE, TAX/COMMERCIAL (per CASE TYPE CLASSIFICATION above; never use the word "Complaint" as the case type value).
    - "petitioner_lawyers" / "respondent_lawyers" = Extract from the "APPEARANCES" section (usually starts with "Mr.", "Ms.", or "Adv.").
 
 ### JSON SCHEMA:
@@ -86,9 +107,10 @@ Every object MUST follow this structure. Use null for missing strings and [] for
     "complaint_number": "string (Standardized: e.g. 109512025)",
     "appeal_from_order": "string (Lower-court/authority challenged case number OR null; see rules above)",
     "case_title": "string (Party A vs Party B)",
+    "case_type": "string (CRIMINAL | CIVIL | PROPERTY | MATRIMONIAL | SERVICE | TAX/COMMERCIAL)",
     "court_type": "High Court",
     "court": "Bombay High Court",
-    "judge": "string",
+    "judges": ["string (up to 9 judge names from CORAM)"],
     "petitioner_lawyers": ["string"],
     "respondent_lawyers": ["string"],
     "filing_date": "string",
@@ -99,7 +121,7 @@ Every object MUST follow this structure. Use null for missing strings and [] for
     "respondent": "string",
     "total_hearings": "integer"
   }
-] 
+]
 
 ### MAPPING LOGIC:
 4. STATUS MAPPING (Strict): Use ONLY:
@@ -115,7 +137,7 @@ Every object MUST follow this structure. Use null for missing strings and [] for
 ### SEARCH LOCATIONS:
 - CASE NUMBER: Top of page 1.
 - LAWYERS: Page 1-2, usually under "APPEARANCES" or "Mr./Ms. [Name] for [Party]".
-- JUDGE: Page 1-2, usually under "Coram".
+- JUDGES: Page 1-2, usually under "Coram".
 - JUDGMENT DATE: Usually at the very end of the document after the signature or at the top under "DATED".
 - OUTCOME: The very last 2-3 paragraphs under the header "ORDER".
 `);
@@ -189,13 +211,74 @@ Every object MUST follow this structure. Use null for missing strings and [] for
     [initialBatchSize, threadPrefix, threadsToSpawn]
   );
 
+  const claimThreadKeyLease = async (threadId: string, provider: string, excludeKeyId: string | null = null) => {
+    const supabase = getSupabase();
+    const { data, error } = await supabase.rpc("claim_ai_key_for_thread", {
+      p_provider: provider,
+      p_thread_id: threadId,
+      p_exclude_key_id: excludeKeyId,
+    });
+    if (error) throw error;
+    return (data ?? null) as AiKeyRow | null;
+  };
+
+  const releaseThreadKeyLease = async (threadId: string) => {
+    const supabase = getSupabase();
+    const { error } = await supabase.rpc("release_ai_key_for_thread", {
+      p_thread_id: threadId,
+      p_cooldown_until: null,
+    });
+    if (error) throw error;
+  };
+
   const toggleActive = async (id: string) => {
     const target = threads.find((t) => t.id === id);
     if (!target) return;
     const supabase = getSupabase();
-    const { error } = await supabase.from("ai_threads").update({ is_active: !target.active }).eq("id", id);
-    if (!error) {
-      onChange(threads.map((t) => (t.id === id ? { ...t, active: !t.active } : t)));
+    try {
+      if (target.active) {
+        await releaseThreadKeyLease(id);
+        const { error } = await supabase
+          .from("ai_threads")
+          .update({ is_active: false, assigned_key_id: null, api_key_secret: "" })
+          .eq("id", id);
+        if (error) throw error;
+        onChange(threads.map((t) => (t.id === id ? { ...t, active: false, assignedKeyId: null, assignedKeyPreview: null, apiKey: "", keyStatus: null } : t)));
+      } else {
+        const claimedKey = await claimThreadKeyLease(id, target.provider, null);
+        if (!claimedKey) {
+          throw new Error(`No active ${FREE_AI_PROVIDERS[target.provider as ProviderKey]?.name || target.provider} key is available to activate this thread.`);
+        }
+        const { error } = await supabase
+          .from("ai_threads")
+          .update({
+            is_active: true,
+            assigned_key_id: claimedKey.id,
+            api_key_secret: claimedKey.key_value,
+          })
+          .eq("id", id);
+        if (error) {
+          await releaseThreadKeyLease(id);
+          throw error;
+        }
+        const keyPreview = maskKey(claimedKey.key_value);
+        onChange(
+          threads.map((t) =>
+            t.id === id
+              ? {
+                  ...t,
+                  active: true,
+                  assignedKeyId: claimedKey.id,
+                  assignedKeyPreview: keyPreview,
+                  apiKey: claimedKey.key_value,
+                  keyStatus: claimedKey.status,
+                }
+              : t
+          )
+        );
+      }
+    } catch {
+      // soft-fail; this is an admin UI
     }
   };
 
@@ -251,30 +334,69 @@ Every object MUST follow this structure. Use null for missing strings and [] for
     setBusy(true);
     try {
       const supabase = getSupabase();
-      const activeKeys = keys.filter((key) => key.provider === spawnProvider && key.status === "ACTIVE");
-      if (activeKeys.length < threadsToSpawn) {
-        throw new Error(`Need ${threadsToSpawn} active ${FREE_AI_PROVIDERS[spawnProvider].name} keys, but only found ${activeKeys.length}.`);
+      const createdThreadIds: string[] = [];
+      try {
+        for (let index = 0; index < threadsToSpawn; index += 1) {
+          const threadName = `${threadPrefix.trim()}-${index + 1}`;
+          const { data: inserted, error: insertError } = await supabase
+            .from("ai_threads")
+            .insert([
+              {
+                name: threadName,
+                provider: spawnProvider,
+                model,
+                api_key_secret: "",
+                batch_size: initialBatchSize,
+                current_batch_size: initialBatchSize,
+                consecutive_errors: 0,
+                assigned_key_id: null,
+                rpd_limit: rpdLimit,
+                system_prompt: prompt,
+                is_active: false,
+              },
+            ])
+            .select("id")
+            .single();
+          if (insertError) throw insertError;
+
+          const threadId = String(inserted?.id ?? "").trim();
+          if (!threadId) throw new Error("Thread creation failed: missing thread id.");
+          createdThreadIds.push(threadId);
+
+          const claimedKey = await claimThreadKeyLease(threadId, spawnProvider, null);
+          if (!claimedKey) {
+            throw new Error(
+              `Need ${threadsToSpawn} unused active ${FREE_AI_PROVIDERS[spawnProvider].name} keys, but one could not be reserved.`
+            );
+          }
+
+          const { error: updateError } = await supabase
+            .from("ai_threads")
+            .update({
+              api_key_secret: claimedKey.key_value,
+              assigned_key_id: claimedKey.id,
+              is_active: true,
+            })
+            .eq("id", threadId);
+          if (updateError) {
+            await releaseThreadKeyLease(threadId);
+            throw updateError;
+          }
+        }
+      } catch (spawnError) {
+        await Promise.all(
+          createdThreadIds.map(async (threadId) => {
+            try {
+              await releaseThreadKeyLease(threadId);
+            } catch {
+              // ignore cleanup failures
+            }
+            await supabase.from("ai_threads").delete().eq("id", threadId);
+          })
+        );
+        throw spawnError;
       }
 
-      const rows = Array.from({ length: threadsToSpawn }, (_, index) => {
-        const assignedKey = activeKeys[index];
-        return {
-          name: `${threadPrefix.trim()}-${index + 1}`,
-          provider: spawnProvider,
-          model,
-          api_key_secret: assignedKey.key_value,
-          batch_size: initialBatchSize,
-          current_batch_size: initialBatchSize,
-          consecutive_errors: 0,
-          assigned_key_id: assignedKey.id,
-          rpd_limit: rpdLimit,
-          system_prompt: prompt,
-          is_active: true,
-        };
-      });
-
-      const { error } = await supabase.from("ai_threads").insert(rows);
-      if (error) throw error;
       await Promise.all([loadThreads(), loadKeys()]);
     } finally {
       setBusy(false);

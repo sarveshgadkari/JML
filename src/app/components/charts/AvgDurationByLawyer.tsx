@@ -5,14 +5,14 @@ import { Bar, BarChart, CartesianGrid, LabelList, ResponsiveContainer, Tooltip, 
 
 type Row = { name: string; avgDays: number };
 
-export default function AvgDurationByLawyer({ data }: { data?: Row[] }) {
+export default function AvgDurationByLawyer({ data, loading = false }: { data?: Row[]; loading?: boolean }) {
   const rows = useMemo<Row[]>(() => data ?? [], [data]);
   return (
     <div className="h-[300px] w-full">
       <ResponsiveContainer width="100%" height={300}>
         {rows.length === 0 ? (
           <div className="h-full w-full flex items-center justify-center text-sm text-[#5f6368]">
-            No duration data available.
+            {loading ? "loading please wait" : "No duration data available."}
           </div>
         ) : (
           <BarChart
