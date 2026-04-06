@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Play, Pause, Settings, KeyRound, Plus, Trash2 } from "lucide-react";
 import { FREE_AI_PROVIDERS } from "../../../../lib/ai-free-tiers";
 import getSupabase from "../../../../utils/supabase/client";
@@ -51,6 +51,7 @@ export default function ThreadConfigurator({ threads, onChange }: Props) {
   const [busy, setBusy] = useState(false);
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [spawnErrorMessage, setSpawnErrorMessage] = useState<string | null>(null);
+  const aiKeyLeaseRpcAvailableRef = useRef<boolean | null>(null);
   const activeModel = useMemo(() => {
     const all = FREE_AI_PROVIDERS[spawnProvider].models;
     return all.find((m) => m.id === model) || all[0];
@@ -268,6 +269,11 @@ Every object MUST follow this structure. Use null for missing strings and [] for
 
   const claimThreadKeyLease = async (threadId: string, provider: string, excludeKeyId: string | null = null) => {
     const supabase = getSupabase();
+
+    if (aiKeyLeaseRpcAvailableRef.current === false) {
+      return claimThreadKeyLeaseFallback(threadId, provider, excludeKeyId);
+    }
+
     const { data, error } = await supabase.rpc("claim_ai_key_for_thread", {
       p_provider: provider,
       p_thread_id: threadId,
@@ -275,15 +281,39 @@ Every object MUST follow this structure. Use null for missing strings and [] for
     });
     if (error) {
       if (isMissingRpcError(error)) {
+        aiKeyLeaseRpcAvailableRef.current = false;
         return claimThreadKeyLeaseFallback(threadId, provider, excludeKeyId);
       }
       throw error;
     }
+    aiKeyLeaseRpcAvailableRef.current = true;
     return (data ?? null) as AiKeyRow | null;
   };
 
   const releaseThreadKeyLease = async (threadId: string) => {
     const supabase = getSupabase();
+
+    if (aiKeyLeaseRpcAvailableRef.current === false) {
+      const { data: threadRow } = await supabase
+        .from("ai_threads")
+        .select("assigned_key_id")
+        .eq("id", threadId)
+        .maybeSingle();
+
+      const assignedKeyId = String((threadRow as any)?.assigned_key_id ?? "").trim();
+      if (assignedKeyId) {
+        await supabase
+          .from("ai_keys")
+          .update({ status: "ACTIVE", cooldown_until: null })
+          .eq("id", assignedKeyId);
+      }
+      await supabase
+        .from("ai_threads")
+        .update({ assigned_key_id: null })
+        .eq("id", threadId);
+      return;
+    }
+
     const { error } = await supabase.rpc("release_ai_key_for_thread", {
       p_thread_id: threadId,
       p_cooldown_until: null,
@@ -292,6 +322,8 @@ Every object MUST follow this structure. Use null for missing strings and [] for
       if (!isMissingRpcError(error)) {
         throw error;
       }
+
+      aiKeyLeaseRpcAvailableRef.current = false;
 
       const { data: threadRow } = await supabase
         .from("ai_threads")
@@ -310,7 +342,9 @@ Every object MUST follow this structure. Use null for missing strings and [] for
         .from("ai_threads")
         .update({ assigned_key_id: null })
         .eq("id", threadId);
+      return;
     }
+    aiKeyLeaseRpcAvailableRef.current = true;
   };
 
   const toggleActive = async (id: string) => {

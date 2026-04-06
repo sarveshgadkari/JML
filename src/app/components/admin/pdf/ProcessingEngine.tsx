@@ -10,6 +10,14 @@ type QueueItem = {
   direct_download_url?: string | null;
 };
 
+type AiKeyRow = {
+  id: string;
+  key_value: string;
+  status?: string;
+  cooldown_until?: string | null;
+  daily_usage_count?: number;
+};
+
 type ThreadCfg = {
   id: string;
   name: string;
@@ -59,6 +67,7 @@ export default function ProcessingEngine({
   const [runtimeState, setRuntimeState] = useState<Record<string, RuntimeThreadState>>({});
   const runRef = useRef(false);
   const popupRefs = useRef<Record<string, Window | null>>({});
+  const aiKeyLeaseRpcAvailableRef = useRef<boolean | null>(null);
 
   const log = useCallback((m: string) => {
     setLogs((prev) => [...prev.slice(-400), `[${new Date().toLocaleTimeString()}] ${m}`]);
@@ -81,6 +90,120 @@ export default function ProcessingEngine({
 
   const threadPrefix = (thread: ThreadCfg, state?: RuntimeThreadState) =>
     `[${thread.name} | ${state?.assignedKeyPreview || thread.assignedKeyPreview || "NoKey"}]`;
+
+  const isMissingKeyLeaseRpcError = (error: any) => {
+    const code = String(error?.code ?? "").toUpperCase();
+    const message = String(error?.message ?? "").toLowerCase();
+    return code === "PGRST202" || (message.includes("could not find the function") && (message.includes("claim_ai_key_for_thread") || message.includes("release_ai_key_for_thread")));
+  };
+
+  const claimThreadKeyLeaseFallback = useCallback(async (threadId: string, provider: string, excludeKeyId: string | null = null) => {
+    const supabase = getSupabase();
+
+    const { data: availableKeys, error: keysError } = await supabase
+      .from("ai_keys")
+      .select("id,key_value,status,cooldown_until,daily_usage_count")
+      .eq("provider", provider)
+      .eq("status", "ACTIVE")
+      .order("daily_usage_count", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (keysError) throw keysError;
+
+    const { data: inUseThreads, error: threadsError } = await supabase
+      .from("ai_threads")
+      .select("assigned_key_id")
+      .not("assigned_key_id", "is", null);
+    if (threadsError) throw threadsError;
+
+    const excludedIds = new Set<string>();
+    for (const row of inUseThreads ?? []) {
+      const assignedId = String((row as any)?.assigned_key_id ?? "").trim();
+      if (assignedId) excludedIds.add(assignedId);
+    }
+    if (excludeKeyId) excludedIds.add(excludeKeyId);
+
+    const now = Date.now();
+    const candidate = (availableKeys ?? []).find((key) => {
+      const keyId = String((key as any)?.id ?? "").trim();
+      if (!keyId || excludedIds.has(keyId)) return false;
+      const cooldownUntil = (key as any)?.cooldown_until;
+      if (!cooldownUntil) return true;
+      const cooldownTime = new Date(cooldownUntil).getTime();
+      return Number.isNaN(cooldownTime) || cooldownTime <= now;
+    }) as AiKeyRow | undefined;
+
+    if (!candidate) return null;
+
+    await supabase.from("ai_threads").update({ assigned_key_id: candidate.id }).eq("id", threadId);
+    return candidate;
+  }, []);
+
+  const claimThreadKeyLease = useCallback(async (threadId: string, provider: string, excludeKeyId: string | null = null) => {
+    const supabase = getSupabase();
+
+    if (aiKeyLeaseRpcAvailableRef.current === false) {
+      return claimThreadKeyLeaseFallback(threadId, provider, excludeKeyId);
+    }
+
+    const { data, error } = await supabase.rpc("claim_ai_key_for_thread", {
+      p_provider: provider,
+      p_thread_id: threadId,
+      p_exclude_key_id: excludeKeyId,
+    });
+
+    if (error) {
+      if (isMissingKeyLeaseRpcError(error)) {
+        aiKeyLeaseRpcAvailableRef.current = false;
+        return claimThreadKeyLeaseFallback(threadId, provider, excludeKeyId);
+      }
+      throw error;
+    }
+
+    aiKeyLeaseRpcAvailableRef.current = true;
+    return (data ?? null) as AiKeyRow | null;
+  }, [claimThreadKeyLeaseFallback]);
+
+  const releaseThreadKeyLease = useCallback(async (threadId: string, cooldownUntil: string | null = null) => {
+    const supabase = getSupabase();
+
+    if (aiKeyLeaseRpcAvailableRef.current === false) {
+      const { data: threadRow } = await supabase
+        .from("ai_threads")
+        .select("assigned_key_id")
+        .eq("id", threadId)
+        .maybeSingle();
+
+      const assignedKeyId = String((threadRow as any)?.assigned_key_id ?? "").trim();
+      if (assignedKeyId) {
+        await supabase
+          .from("ai_keys")
+          .update({
+            status: cooldownUntil ? "COOLDOWN" : "ACTIVE",
+            cooldown_until: cooldownUntil,
+          })
+          .eq("id", assignedKeyId);
+      }
+
+      await supabase.from("ai_threads").update({ assigned_key_id: null }).eq("id", threadId);
+      return;
+    }
+
+    const { error } = await supabase.rpc("release_ai_key_for_thread", {
+      p_thread_id: threadId,
+      p_cooldown_until: cooldownUntil,
+    });
+
+    if (error) {
+      if (isMissingKeyLeaseRpcError(error)) {
+        aiKeyLeaseRpcAvailableRef.current = false;
+        await releaseThreadKeyLease(threadId, cooldownUntil);
+        return;
+      }
+      throw error;
+    }
+
+    aiKeyLeaseRpcAvailableRef.current = true;
+  }, []);
 
   const persistWorkerRuntime = useCallback(async (
     threadId: string,
@@ -176,14 +299,10 @@ export default function ProcessingEngine({
 
   const releaseThreadKeyLeases = useCallback(async (threadIds: string[], cooldownUntil: string | null = null) => {
     if (threadIds.length === 0) return;
-    const supabase = getSupabase();
     for (const threadId of threadIds) {
-      await supabase.rpc("release_ai_key_for_thread", {
-        p_thread_id: threadId,
-        p_cooldown_until: cooldownUntil,
-      });
+      await releaseThreadKeyLease(threadId, cooldownUntil);
     }
-  }, []);
+  }, [releaseThreadKeyLease]);
   const updateRuntime = useCallback((threadId: string, updater: (prev: RuntimeThreadState) => RuntimeThreadState) => {
     setRuntimeState((prev) => {
       const current = prev[threadId];
@@ -223,16 +342,10 @@ export default function ProcessingEngine({
   }, []);
 
   const fetchReplacementKey = useCallback(async (thread: ThreadCfg) => {
-    const supabase = getSupabase();
     const state = runtimeState[thread.id];
-    const { data, error } = await supabase.rpc("claim_ai_key_for_thread", {
-      p_provider: thread.provider,
-      p_thread_id: thread.id,
-      p_exclude_key_id: state?.assignedKeyId ?? null,
-    });
-    if (error) throw error;
-    return data as any;
-  }, [runtimeState]);
+    const claimed = await claimThreadKeyLease(thread.id, thread.provider, state?.assignedKeyId ?? null);
+    return claimed as any;
+  }, [claimThreadKeyLease, runtimeState]);
 
   const rotateThreadKey = useCallback(async (thread: ThreadCfg, reason: string, shouldCooldownCurrentKey: boolean) => {
     const state = runtimeState[thread.id];
