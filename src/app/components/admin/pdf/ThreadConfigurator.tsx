@@ -50,6 +50,7 @@ export default function ThreadConfigurator({ threads, onChange }: Props) {
   const [rpdLimit, setRpdLimit] = useState<number>(FREE_AI_PROVIDERS[providerKeys[0]].models[0].maxRpd);
   const [busy, setBusy] = useState(false);
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
+  const [spawnErrorMessage, setSpawnErrorMessage] = useState<string | null>(null);
   const activeModel = useMemo(() => {
     const all = FREE_AI_PROVIDERS[spawnProvider].models;
     return all.find((m) => m.id === model) || all[0];
@@ -211,6 +212,60 @@ Every object MUST follow this structure. Use null for missing strings and [] for
     [initialBatchSize, threadPrefix, threadsToSpawn]
   );
 
+  const isMissingRpcError = (error: any) => {
+    const code = String(error?.code ?? "").toUpperCase();
+    const message = String(error?.message ?? "").toLowerCase();
+    return code === "PGRST202" || (message.includes("could not find the function") && message.includes("claim_ai_key_for_thread"));
+  };
+
+  const toErrorMessage = (error: any, fallback: string) => {
+    if (!error) return fallback;
+    if (typeof error === "string") return error;
+    const message = error.message || error.details || error.hint;
+    return message ? String(message) : fallback;
+  };
+
+  const claimThreadKeyLeaseFallback = async (threadId: string, provider: string, excludeKeyId: string | null = null) => {
+    const supabase = getSupabase();
+
+    const { data: availableKeys, error: keysError } = await supabase
+      .from("ai_keys")
+      .select("id,provider,key_value,status,cooldown_until,daily_usage_count")
+      .eq("provider", provider)
+      .eq("status", "ACTIVE")
+      .order("daily_usage_count", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (keysError) throw keysError;
+
+    const { data: inUseThreads, error: threadsError } = await supabase
+      .from("ai_threads")
+      .select("assigned_key_id")
+      .not("assigned_key_id", "is", null);
+    if (threadsError) throw threadsError;
+
+    const excludedIds = new Set<string>();
+    for (const row of inUseThreads ?? []) {
+      const assignedId = String((row as any)?.assigned_key_id ?? "").trim();
+      if (assignedId) excludedIds.add(assignedId);
+    }
+    if (excludeKeyId) excludedIds.add(excludeKeyId);
+
+    const now = Date.now();
+    const candidate = (availableKeys ?? []).find((key) => {
+      const keyId = String((key as any).id ?? "");
+      if (!keyId || excludedIds.has(keyId)) return false;
+      const cooldownUntil = (key as any).cooldown_until;
+      if (!cooldownUntil) return true;
+      const cooldownTime = new Date(cooldownUntil).getTime();
+      return Number.isNaN(cooldownTime) || cooldownTime <= now;
+    }) as AiKeyRow | undefined;
+
+    if (!candidate) return null;
+
+    await supabase.from("ai_threads").update({ assigned_key_id: candidate.id }).eq("id", threadId);
+    return candidate;
+  };
+
   const claimThreadKeyLease = async (threadId: string, provider: string, excludeKeyId: string | null = null) => {
     const supabase = getSupabase();
     const { data, error } = await supabase.rpc("claim_ai_key_for_thread", {
@@ -218,7 +273,12 @@ Every object MUST follow this structure. Use null for missing strings and [] for
       p_thread_id: threadId,
       p_exclude_key_id: excludeKeyId,
     });
-    if (error) throw error;
+    if (error) {
+      if (isMissingRpcError(error)) {
+        return claimThreadKeyLeaseFallback(threadId, provider, excludeKeyId);
+      }
+      throw error;
+    }
     return (data ?? null) as AiKeyRow | null;
   };
 
@@ -228,7 +288,29 @@ Every object MUST follow this structure. Use null for missing strings and [] for
       p_thread_id: threadId,
       p_cooldown_until: null,
     });
-    if (error) throw error;
+    if (error) {
+      if (!isMissingRpcError(error)) {
+        throw error;
+      }
+
+      const { data: threadRow } = await supabase
+        .from("ai_threads")
+        .select("assigned_key_id")
+        .eq("id", threadId)
+        .maybeSingle();
+
+      const assignedKeyId = String((threadRow as any)?.assigned_key_id ?? "").trim();
+      if (assignedKeyId) {
+        await supabase
+          .from("ai_keys")
+          .update({ status: "ACTIVE", cooldown_until: null })
+          .eq("id", assignedKeyId);
+      }
+      await supabase
+        .from("ai_threads")
+        .update({ assigned_key_id: null })
+        .eq("id", threadId);
+    }
   };
 
   const toggleActive = async (id: string) => {
@@ -331,6 +413,7 @@ Every object MUST follow this structure. Use null for missing strings and [] for
 
   const spawnThreads = async () => {
     if (!canSpawnThreads || busy) return;
+    setSpawnErrorMessage(null);
     setBusy(true);
     try {
       const supabase = getSupabase();
@@ -398,6 +481,8 @@ Every object MUST follow this structure. Use null for missing strings and [] for
       }
 
       await Promise.all([loadThreads(), loadKeys()]);
+    } catch (error: any) {
+      setSpawnErrorMessage(toErrorMessage(error, "Thread creation failed. Please check key pool and Supabase schema."));
     } finally {
       setBusy(false);
     }
@@ -508,6 +593,11 @@ Every object MUST follow this structure. Use null for missing strings and [] for
           <Settings className="w-4 h-4" /> Auto-Provision Threads
         </div>
         <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {spawnErrorMessage && (
+            <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {spawnErrorMessage}
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">AI Provider</label>
             <select

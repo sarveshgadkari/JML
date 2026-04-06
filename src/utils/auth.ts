@@ -1,12 +1,11 @@
 // Authentication utilities for Judge My Lawyer
 // Handles Supabase Auth integration
 
-import { createClient } from '@supabase/supabase-js';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { publicAnonKey } from '/utils/supabase/info';
+import getSupabase from './supabase/client';
 import { setAuthToken, clearAuthToken } from './api';
 
-const supabaseUrl = `https://${projectId}.supabase.co`;
-const supabase = createClient(supabaseUrl, publicAnonKey);
+const supabase = getSupabase();
 
 // =====================================================
 // AUTHENTICATION
