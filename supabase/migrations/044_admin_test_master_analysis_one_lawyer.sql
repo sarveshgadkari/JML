@@ -110,7 +110,7 @@ BEGIN
     respondent_lawyer_4 = ca.respondent_lawyer_4,
     respondent_lawyer_5 = ca.respondent_lawyer_5
   FROM public.cases_analytics ca
-  WHERE ca.case_number = c.case_number;
+  WHERE ca.case_number = c.case_number
     AND (
       public.canonical_person_name(ca.petitioner_lawyer_1) = v_key OR
       public.canonical_person_name(ca.petitioner_lawyer_2) = v_key OR

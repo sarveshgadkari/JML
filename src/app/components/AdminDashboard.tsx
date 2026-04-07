@@ -655,66 +655,102 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
         const lawyerJudgeRows = await rebuildLawyerJudgeAnalyticsClientWide(latestRows);
         log(`RESULT: rebuildLawyerJudgeAnalyticsClientWide rebuilt ${lawyerJudgeRows} row(s).`);
 
-        const loadAllEntityIds = async (table: 'lawyers' | 'judges') => {
-          const ids: string[] = [];
+        const loadAllEntityRows = async (table: 'lawyers' | 'judges') => {
+          const rowsOut: Array<{ id: string; name: string }> = [];
           const page = 1000;
           let from = 0;
           while (true) {
             const { data, error } = await supabase
               .from(table)
-              .select('id')
+              .select('id,name')
               .order('id', { ascending: true })
               .range(from, from + page - 1);
             if (error) throw error;
-            const rows = (data ?? []) as Array<{ id?: string | null }>;
-            ids.push(...rows.map((r) => String(r?.id ?? '').trim()).filter(Boolean));
+            const rows = (data ?? []) as Array<{ id?: string | null; name?: string | null }>;
+            rowsOut.push(...rows
+              .map((r) => ({
+                id: String(r?.id ?? '').trim(),
+                name: String(r?.name ?? '').trim(),
+              }))
+              .filter((r) => Boolean(r.id)));
             if (rows.length < page) break;
             from += page;
           }
-          return ids;
+          return rowsOut;
         };
 
-        const allLawyerIds = await loadAllEntityIds('lawyers');
-        const allJudgeIds = await loadAllEntityIds('judges');
+        const allLawyerRows = await loadAllEntityRows('lawyers');
+        const allJudgeRows = await loadAllEntityRows('judges');
 
+        const chartBatchSize = 100;
         let chartLawyerRes = 0;
-        for (let i = 0; i < allLawyerIds.length; i += 1) {
-          const lawyerId = allLawyerIds[i];
-          setMessage(`Refreshing lawyer chart columns (frontend) ... ${i + 1}/${allLawyerIds.length}`);
-          try {
-            chartLawyerRes += await refreshLawyerChartsClientFallback(
-              lawyerId,
-              {
-                p_scope: 'entity_id',
-                p_case_numbers: null,
-                p_entity_type: 'lawyer',
-                p_entity_id: lawyerId,
-              },
-              log
-            );
-          } catch (chartErr: any) {
-            log(`WARN: lawyer chart refresh skipped for ${lawyerId}: ${String(chartErr?.message || chartErr || 'Unknown error')}`);
-          }
+        for (let i = 0; i < allLawyerRows.length; i += chartBatchSize) {
+          const batch = allLawyerRows.slice(i, i + chartBatchSize);
+          const batchNumber = Math.floor(i / chartBatchSize) + 1;
+          const totalBatches = Math.max(1, Math.ceil(allLawyerRows.length / chartBatchSize));
+          const processedUpperBound = Math.min(i + batch.length, allLawyerRows.length);
+          setMessage(`Refreshing lawyer chart columns (frontend) ... batch ${batchNumber}/${totalBatches} (${processedUpperBound}/${allLawyerRows.length})`);
+
+          const batchResults = await Promise.allSettled(
+            batch.map(async (lawyer) => {
+              try {
+                return await refreshLawyerChartsClientFallback(
+                  lawyer.id,
+                  {
+                    p_scope: 'entity_id',
+                    p_case_numbers: null,
+                    p_entity_type: 'lawyer',
+                    p_entity_id: lawyer.id,
+                  },
+                  log,
+                  normalizeName(lawyer.name)
+                );
+              } catch (chartErr: any) {
+                log(`WARN: lawyer chart refresh skipped for ${lawyer.id}: ${String(chartErr?.message || chartErr || 'Unknown error')}`);
+                return 0;
+              }
+            })
+          );
+
+          chartLawyerRes += batchResults.reduce((sum, item) => {
+            if (item.status === 'fulfilled') return sum + Number(item.value || 0);
+            return sum;
+          }, 0);
         }
 
         let chartJudgeRes = 0;
-        for (let i = 0; i < allJudgeIds.length; i += 1) {
-          const judgeId = allJudgeIds[i];
-          setMessage(`Refreshing judge chart columns (frontend) ... ${i + 1}/${allJudgeIds.length}`);
-          try {
-            chartJudgeRes += await refreshJudgeChartsClientFallback(
-              judgeId,
-              {
-                p_scope: 'entity_id',
-                p_case_numbers: null,
-                p_entity_type: 'judge',
-                p_entity_id: judgeId,
-              },
-              log
-            );
-          } catch (chartErr: any) {
-            log(`WARN: judge chart refresh skipped for ${judgeId}: ${String(chartErr?.message || chartErr || 'Unknown error')}`);
-          }
+        for (let i = 0; i < allJudgeRows.length; i += chartBatchSize) {
+          const batch = allJudgeRows.slice(i, i + chartBatchSize);
+          const batchNumber = Math.floor(i / chartBatchSize) + 1;
+          const totalBatches = Math.max(1, Math.ceil(allJudgeRows.length / chartBatchSize));
+          const processedUpperBound = Math.min(i + batch.length, allJudgeRows.length);
+          setMessage(`Refreshing judge chart columns (frontend) ... batch ${batchNumber}/${totalBatches} (${processedUpperBound}/${allJudgeRows.length})`);
+
+          const batchResults = await Promise.allSettled(
+            batch.map(async (judge) => {
+              try {
+                return await refreshJudgeChartsClientFallback(
+                  judge.id,
+                  {
+                    p_scope: 'entity_id',
+                    p_case_numbers: null,
+                    p_entity_type: 'judge',
+                    p_entity_id: judge.id,
+                  },
+                  log,
+                  normalizeName(judge.name)
+                );
+              } catch (chartErr: any) {
+                log(`WARN: judge chart refresh skipped for ${judge.id}: ${String(chartErr?.message || chartErr || 'Unknown error')}`);
+                return 0;
+              }
+            })
+          );
+
+          chartJudgeRes += batchResults.reduce((sum, item) => {
+            if (item.status === 'fulfilled') return sum + Number(item.value || 0);
+            return sum;
+          }, 0);
         }
 
         setMessage(
@@ -1202,17 +1238,21 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
   const refreshLawyerChartsClientFallback = async (
     lawyerId: string,
     scopePayload: { p_scope: string; p_case_numbers: string[] | null; p_entity_type: string; p_entity_id: string },
-    log: (line: string) => void
+    log: (line: string) => void,
+    precomputedTargetKey?: string,
+    _precomputedName?: string
   ) => {
     const supabase = getSupabase();
-    const { data: lawyerRow, error: lawyerError } = await supabase
-      .from('lawyers')
-      .select('id,name')
-      .eq('id', lawyerId)
-      .single();
-    if (lawyerError) throw lawyerError;
-
-    const targetKey = normalizeName(lawyerRow?.name);
+    let targetKey = String(precomputedTargetKey ?? '').trim();
+    if (!targetKey) {
+      const { data: lawyerRow, error: lawyerError } = await supabase
+        .from('lawyers')
+        .select('id,name')
+        .eq('id', lawyerId)
+        .single();
+      if (lawyerError) throw lawyerError;
+      targetKey = normalizeName(lawyerRow?.name);
+    }
     if (!targetKey) return 0;
 
     log(`COMMAND: rpc admin_worker_scope_case_numbers(${JSON.stringify(scopePayload)})`);
@@ -1443,19 +1483,26 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
   const refreshJudgeChartsClientFallback = async (
     judgeId: string,
     scopePayload: { p_scope: string; p_case_numbers: string[] | null; p_entity_type: string; p_entity_id: string },
-    log: (line: string) => void
+    log: (line: string) => void,
+    precomputedTargetKey?: string,
+    precomputedName?: string
   ) => {
     const supabase = getSupabase();
-    const { data: judgeRow, error: judgeError } = await supabase
-      .from('judges')
-      .select('id,name')
-      .eq('id', judgeId)
-      .single();
-    if (judgeError) throw judgeError;
-
-    const targetKey = normalizeName(judgeRow?.name);
+    let judgeName = String(precomputedName ?? '').trim();
+    let targetKey = String(precomputedTargetKey ?? '').trim();
+    if (!targetKey) {
+      const { data: judgeRow, error: judgeError } = await supabase
+        .from('judges')
+        .select('id,name')
+        .eq('id', judgeId)
+        .single();
+      if (judgeError) throw judgeError;
+      judgeName = String(judgeRow?.name ?? '').trim();
+      targetKey = normalizeName(judgeRow?.name);
+    }
     if (!targetKey) return 0;
-
+                  normalizeName(judge.name),
+                  judge.name
     log(`COMMAND: rpc admin_worker_scope_case_numbers(${JSON.stringify(scopePayload)})`);
     const { data: scoped, error: scopedError } = await (supabase as any).rpc('admin_worker_scope_case_numbers', scopePayload);
     if (scopedError) throw scopedError;
@@ -1644,7 +1691,7 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
 
     const upsertPayload = {
       judge_id: judgeId,
-      judge_name: String(judgeRow?.name ?? '').trim() || null,
+      judge_name: judgeName || null,
       ...patch,
     };
 

@@ -39,6 +39,7 @@ type ThreadCfg = {
 type RuntimeThreadState = {
   currentBatchSize: number;
   consecutiveErrors: number;
+  resourceExhaustedErrors: number;
   assignedKeyId: string | null;
   apiKey: string;
   assignedKeyPreview: string | null;
@@ -68,6 +69,10 @@ export default function ProcessingEngine({
   const runRef = useRef(false);
   const popupRefs = useRef<Record<string, Window | null>>({});
   const aiKeyLeaseRpcAvailableRef = useRef<boolean | null>(null);
+  const BATCH_COOLDOWN_MS = 10_000;
+  const RESOURCE_EXHAUSTED_KEY_COOLDOWN_MS = 3 * 60 * 1000;
+  const RESOURCE_EXHAUSTED_ESCALATION_THRESHOLD = 5;
+  const RESOURCE_EXHAUSTED_ESCALATION_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
   const log = useCallback((m: string) => {
     setLogs((prev) => [...prev.slice(-400), `[${new Date().toLocaleTimeString()}] ${m}`]);
@@ -341,48 +346,6 @@ export default function ProcessingEngine({
     await supabase.from("ai_threads").update(values).eq("id", threadId);
   }, []);
 
-  const fetchReplacementKey = useCallback(async (thread: ThreadCfg) => {
-    const state = runtimeState[thread.id];
-    const claimed = await claimThreadKeyLease(thread.id, thread.provider, state?.assignedKeyId ?? null);
-    return claimed as any;
-  }, [claimThreadKeyLease, runtimeState]);
-
-  const rotateThreadKey = useCallback(async (thread: ThreadCfg, reason: string, shouldCooldownCurrentKey: boolean) => {
-    const state = runtimeState[thread.id];
-    const cooldownUntil = shouldCooldownCurrentKey ? new Date(Date.now() + 3 * 60 * 1000).toISOString() : null;
-
-    // Try to avoid reselecting the same key.
-    let replacement = await fetchReplacementKey(thread);
-    if (!replacement) {
-      throw new Error(`No active replacement key available for ${thread.provider}.`);
-    }
-
-    if (state?.assignedKeyId) {
-      await releaseThreadKeyLeases([thread.id], cooldownUntil);
-    }
-
-    await persistThreadState(thread.id, {
-      assigned_key_id: replacement.id,
-      api_key_secret: replacement.key_value,
-      current_batch_size: thread.batchSize,
-      consecutive_errors: 0,
-    });
-
-    updateRuntime(thread.id, (prev) => ({
-      ...prev,
-      assignedKeyId: replacement.id,
-      apiKey: replacement.key_value,
-      assignedKeyPreview: maskKey(replacement.key_value),
-      dailyUsageCount: replacement.daily_usage_count ?? 0,
-      consecutiveErrors: 0,
-      currentBatchSize: thread.batchSize,
-    }));
-
-    log(
-      `${threadPrefix(thread, state)} 🚨 Rotating API Key.${shouldCooldownCurrentKey ? " Cool-down initiated for 3m." : ""} ${reason}`
-    );
-  }, [fetchReplacementKey, log, persistThreadState, releaseThreadKeyLeases, runtimeState, updateRuntime]);
-
   // Count every AI request/batch attempt towards RPD (per API key).
   const markAiAttempt = useCallback(async (thread: ThreadCfg) => {
     let assignedKeyId: string | null = null;
@@ -459,6 +422,7 @@ export default function ProcessingEngine({
     updateRuntime(thread.id, (prev) => ({
       ...prev,
       consecutiveErrors: 0,
+      resourceExhaustedErrors: 0,
       dailyUsageCount: prev.dailyUsageCount,
     }));
     await persistWorkerRuntime(thread.id, {
@@ -468,37 +432,92 @@ export default function ProcessingEngine({
     });
   }, [persistThreadState, persistWorkerRuntime, runtimeState, updateRuntime]);
 
+  const isResourceExhaustedError = useCallback((error: unknown) => {
+    const message = String((error as any)?.message || error || "").toLowerCase();
+    return (
+      (message.includes("exhausted") && message.includes("resource")) ||
+      message.includes("resource_exhausted") ||
+      message.includes("insufficient_quota") ||
+      message.includes("quota exceeded")
+    );
+  }, []);
+
   const handleThreadError = useCallback(async (thread: ThreadCfg, error: unknown) => {
     const state = runtimeState[thread.id];
-    if (!state) return;
+    if (!state) return false;
     const message = String((error as any)?.message || error || "Unknown error");
+    const isQuotaError = isResourceExhaustedError(error);
     let nextErrors = 0;
+    let nextQuotaErrors = 0;
     let usageCount = state.dailyUsageCount;
 
     setRuntimeState((prev) => {
       const current = prev[thread.id];
       if (!current) return prev;
       nextErrors = current.consecutiveErrors + 1;
+      nextQuotaErrors = isQuotaError ? (current.resourceExhaustedErrors || 0) + 1 : 0;
       usageCount = current.dailyUsageCount;
       return {
         ...prev,
         [thread.id]: {
           ...current,
           consecutiveErrors: nextErrors,
+          resourceExhaustedErrors: nextQuotaErrors,
         },
       };
     });
 
     await persistThreadState(thread.id, { consecutive_errors: nextErrors });
 
-    const rpdLimit = thread.rpdLimit ?? 100;
-    if (usageCount >= rpdLimit) {
-      await rotateThreadKey(thread, message, true);
-      return;
+    if (isQuotaError) {
+      const useEscalationCooldown = nextQuotaErrors >= RESOURCE_EXHAUSTED_ESCALATION_THRESHOLD;
+      const cooldownMs = useEscalationCooldown
+        ? RESOURCE_EXHAUSTED_ESCALATION_COOLDOWN_MS
+        : RESOURCE_EXHAUSTED_KEY_COOLDOWN_MS;
+      const cooldownUntil = new Date(Date.now() + cooldownMs).toISOString();
+
+      if (state.assignedKeyId) {
+        await releaseThreadKeyLeases([thread.id], cooldownUntil);
+        await persistThreadState(thread.id, {
+          assigned_key_id: null,
+          api_key_secret: "",
+        });
+        updateRuntime(thread.id, (prev) => ({
+          ...prev,
+          assignedKeyId: null,
+          apiKey: "",
+          assignedKeyPreview: null,
+        }));
+      }
+
+      await persistWorkerRuntime(thread.id, {
+        worker_state: "error",
+        worker_last_seen_at: new Date().toISOString(),
+        worker_error: `${message}. Quota error count: ${nextQuotaErrors}/${RESOURCE_EXHAUSTED_ESCALATION_THRESHOLD}. Key cooled down until ${new Date(cooldownUntil).toLocaleString()}.`,
+      });
+
+      if (useEscalationCooldown) {
+        log(`${threadPrefix(thread, state)} 🚫 Quota exhausted ${nextQuotaErrors} times. Thread closed for 24h (until ${new Date(cooldownUntil).toLocaleString()}).`);
+        if (typeof window !== "undefined") {
+          window.alert(`Quota exhausted for ${thread.name}. Error seen ${nextQuotaErrors} times. Thread closed for 24 hours.`);
+        }
+      } else {
+        log(`${threadPrefix(thread, state)} 🚫 Resource exhausted (${nextQuotaErrors}/${RESOURCE_EXHAUSTED_ESCALATION_THRESHOLD}). Thread stopped. Key set to cooldown until ${new Date(cooldownUntil).toLocaleString()}.`);
+      }
+      return true;
     }
 
-    // Non-RPD rotations are handled at the AI-call site (rotate on AI errors).
-  }, [persistThreadState, rotateThreadKey, runtimeState]);
+    const rpdLimit = thread.rpdLimit ?? 100;
+    if (usageCount >= rpdLimit) {
+      await persistWorkerRuntime(thread.id, {
+        worker_state: "error",
+        worker_last_seen_at: new Date().toISOString(),
+        worker_error: `Daily usage limit reached (${usageCount}/${rpdLimit}). Rotation disabled.`,
+      });
+      log(`${threadPrefix(thread, state)} 🚫 Daily usage limit reached (${usageCount}/${rpdLimit}). Rotation disabled.`);
+    }
+    return false;
+  }, [RESOURCE_EXHAUSTED_ESCALATION_COOLDOWN_MS, RESOURCE_EXHAUSTED_ESCALATION_THRESHOLD, RESOURCE_EXHAUSTED_KEY_COOLDOWN_MS, isResourceExhaustedError, log, persistThreadState, persistWorkerRuntime, releaseThreadKeyLeases, runtimeState, updateRuntime]);
 
   const getErrorStatusCode = (error: unknown) => {
     const raw = String((error as any)?.message || error || "");
@@ -573,7 +592,7 @@ export default function ProcessingEngine({
       log(`${threadPrefix(thread, state)} [Local] Using PDF URL directly: ${label}...`);
 
       if (state.dailyUsageCount >= (thread.rpdLimit ?? 100)) {
-      await rotateThreadKey(thread, "Daily usage limit reached.", true);
+        throw new Error("Daily usage limit reached for assigned key. Auto rotation is disabled.");
       }
 
       await reserveProviderSlot(thread, state);
@@ -591,9 +610,6 @@ export default function ProcessingEngine({
           }
         );
       } catch (aiErr: any) {
-        const msg = aiErr?.message || String(aiErr);
-        // Rotate key on any AI-provider error (no cooldown unless RPD exceeded).
-        await rotateThreadKey(thread, `AI error: ${msg}`, false);
         throw aiErr;
       }
 
@@ -619,12 +635,13 @@ export default function ProcessingEngine({
         await revertPdfToPending(row.id, retryMessage);
         log(`${threadPrefix(thread, state)} ⚠️ Retryable processing error for ${label}: ${message}. Reverting to PENDING for retry.`);
       }
-      await handleThreadError(thread, error);
+      const shouldStopThread = await handleThreadError(thread, error);
       log(`${threadPrefix(thread, state)} [Error] ${label}: ${message}`);
+      if (shouldStopThread) throw error;
     } finally {
       setInFlight((value) => Math.max(0, value - 1));
     }
-  }, [enqueueCasesForTableAnalysis, finalizePdfImport, handleThreadError, incrementProcessedCount, markAiAttempt, markSuccess, reserveProviderSlot, resolveDownloadUrl, revertPdfToPending, rotateThreadKey, runtimeState, syncPendingError]);
+  }, [enqueueCasesForTableAnalysis, finalizePdfImport, handleThreadError, incrementProcessedCount, markAiAttempt, markSuccess, reserveProviderSlot, resolveDownloadUrl, revertPdfToPending, runtimeState, syncPendingError]);
 
   const processBatchWithGemini = useCallback(async (thread: ThreadCfg, rows: QueueItem[]) => {
     const state = runtimeState[thread.id];
@@ -661,8 +678,6 @@ export default function ProcessingEngine({
           180000
         );
       } catch (aiErr: any) {
-        const msg = aiErr?.message || String(aiErr);
-        await rotateThreadKey(thread, `AI batch error: ${msg}`, false);
         throw aiErr;
       }
 
@@ -716,16 +731,19 @@ export default function ProcessingEngine({
           log(`${threadPrefix(thread, state)} ❌ Batch failure affected ${doc.fileName}: ${message}. Keeping it in PENDING for retry/fix.`);
         }
       }
-      await handleThreadError(thread, error);
-      await persistWorkerRuntime(thread.id, {
-        worker_state: "error",
-        worker_last_seen_at: new Date().toISOString(),
-        worker_error: error?.message || String(error),
-      });
+      const shouldStopThread = await handleThreadError(thread, error);
+      if (shouldStopThread) {
+        await persistWorkerRuntime(thread.id, {
+          worker_state: "error",
+          worker_last_seen_at: new Date().toISOString(),
+          worker_error: error?.message || String(error),
+        });
+        throw error;
+      }
     } finally {
       setInFlight((value) => Math.max(0, value - rows.length));
     }
-  }, [enqueueCasesForTableAnalysis, finalizePdfImport, handleThreadError, incrementProcessedCount, log, markAiAttempt, markSuccess, persistWorkerRuntime, releaseClaimedRows, reserveProviderSlot, resolveDownloadUrl, revertPdfToPending, rotateThreadKey, runtimeState, syncPendingError]);
+  }, [enqueueCasesForTableAnalysis, finalizePdfImport, handleThreadError, incrementProcessedCount, log, markAiAttempt, markSuccess, persistWorkerRuntime, releaseClaimedRows, reserveProviderSlot, resolveDownloadUrl, revertPdfToPending, runtimeState, syncPendingError]);
 
   const runThreadCycle = useCallback(async (thread: ThreadCfg) => {
     const state = runtimeState[thread.id];
@@ -735,9 +753,13 @@ export default function ProcessingEngine({
       while (runRef.current) {
         const current = runtimeState[thread.id] || state;
         if (!current.assignedKeyId || !current.apiKey) {
-          await rotateThreadKey(thread, "Thread missing an assigned key.", false);
-          await sleep(1000);
-          continue;
+          await persistWorkerRuntime(thread.id, {
+            worker_state: "error",
+            worker_last_seen_at: new Date().toISOString(),
+            worker_error: "Thread has no assigned API key. Auto rotation is disabled.",
+          });
+          log(`${threadPrefix(thread, current)} 🚫 Thread has no assigned API key. Auto rotation is disabled.`);
+          break;
         }
 
         const batchSize = Math.max(1, thread.batchSize);
@@ -748,7 +770,8 @@ export default function ProcessingEngine({
 
         if (claimError) {
           log(`${threadPrefix(thread, current)} Claim failed: ${claimError.message}`);
-          await handleThreadError(thread, claimError);
+          const shouldStopThread = await handleThreadError(thread, claimError);
+          if (shouldStopThread) break;
           await sleep(3000);
           continue;
         }
@@ -766,7 +789,8 @@ export default function ProcessingEngine({
           .in("id", queueIds);
         if (rowError) {
           await releaseClaimedRows(queueIds, `Row load failed: ${rowError.message}`);
-          await handleThreadError(thread, rowError);
+          const shouldStopThread = await handleThreadError(thread, rowError);
+          if (shouldStopThread) break;
           await sleep(3000);
           continue;
         }
@@ -801,7 +825,8 @@ export default function ProcessingEngine({
           worker_current_batch_count: 0,
           worker_state: "idle",
         });
-        await sleep(300);
+        log(`${threadPrefix(thread, current)} [Throttle] Cooling down for ${Math.ceil(BATCH_COOLDOWN_MS / 1000)}s after batch.`);
+        await sleep(BATCH_COOLDOWN_MS);
       }
     } finally {
       void persistWorkerRuntime(thread.id, {
@@ -812,7 +837,7 @@ export default function ProcessingEngine({
       void releaseThreadKeyLeases([thread.id], null);
       updateRuntime(thread.id, (prev) => ({ ...prev, isWorking: false, currentBatchClaimed: 0 }));
     }
-  }, [handleThreadError, log, persistWorkerRuntime, popupMode, processBatchWithGemini, processOnePdf, releaseClaimedRows, releaseThreadKeyLeases, rotateThreadKey, runtimeState, updateRuntime]);
+  }, [handleThreadError, log, persistWorkerRuntime, popupMode, processBatchWithGemini, processOnePdf, releaseClaimedRows, releaseThreadKeyLeases, runtimeState, updateRuntime]);
 
   const startAllWorkers = useCallback(async () => {
     if (activeThreads.length === 0) return;
@@ -894,6 +919,7 @@ export default function ProcessingEngine({
         runtimeState[thread.id] || {
           currentBatchSize: thread.currentBatchSize || thread.batchSize,
           consecutiveErrors: thread.consecutiveErrors || 0,
+          resourceExhaustedErrors: 0,
           assignedKeyId: thread.assignedKeyId,
           apiKey: thread.apiKey,
           assignedKeyPreview: thread.assignedKeyPreview,
