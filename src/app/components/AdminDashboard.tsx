@@ -1767,7 +1767,7 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       setMessage(`Loading latest cases_analytics rows ... ${from + 1}-${from + page}`);
       const { data, error } = await supabase
         .from('cases_analytics')
-        .select('id,case_number,court_id,court_name,case_title,outcome,status,summary,filing_date,first_hearing_date,judgment_date,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5,updated_at,created_at')
+        .select('id,case_number,case_type,court_id,court_name,case_title,outcome,status,summary,filing_date,first_hearing_date,judgment_date,judge_1,judge_2,judge_3,judge_4,judge_5,judge_6,judge_7,judge_8,judge_9,petitioner_lawyer_1,petitioner_lawyer_2,petitioner_lawyer_3,petitioner_lawyer_4,petitioner_lawyer_5,respondent_lawyer_1,respondent_lawyer_2,respondent_lawyer_3,respondent_lawyer_4,respondent_lawyer_5,updated_at,created_at')
         .range(from, from + page - 1);
       if (error) throw error;
 
@@ -1852,6 +1852,8 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       partiallyGranted: number;
       durationSum: number;
       durationCount: number;
+      caseTypes: Set<string>;
+      courts: Set<string>;
     };
     const accByLawyerId = new Map<string, Acc>();
 
@@ -1861,7 +1863,9 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       normOutcome: 'complainant' | 'respondent' | 'settled' | 'other',
       statusRaw: string | null,
       filing: string | null,
-      judgment: string | null
+      judgment: string | null,
+      caseTypeRaw: string | null,
+      courtNameRaw: string | null
     ) => {
       const keyName = normalizeName(rawName);
       if (!keyName) return;
@@ -1881,9 +1885,16 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
           partiallyGranted: 0,
           durationSum: 0,
           durationCount: 0,
+          caseTypes: new Set<string>(),
+          courts: new Set<string>(),
         };
         accByLawyerId.set(lawyer.id, acc);
       }
+
+      const caseType = String(caseTypeRaw ?? '').trim();
+      if (caseType) acc.caseTypes.add(caseType);
+      const court = String(courtNameRaw ?? '').trim() || 'Unknown Court';
+      acc.courts.add(court);
 
       const decided = isDecidedOutcomeForAnalytics(normOutcome);
       if (decided) {
@@ -1921,8 +1932,8 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
       const ress = [c.respondent_lawyer_1, c.respondent_lawyer_2, c.respondent_lawyer_3, c.respondent_lawyer_4, c.respondent_lawyer_5].filter(Boolean);
       const petitionerLawyers = pets.length ? pets : [buildSelfRepresentedLawyerName(c.court_name, 'Complainant')];
       const respondentLawyers = ress.length ? ress : [buildSelfRepresentedLawyerName(c.court_name, 'Respondent')];
-      petitionerLawyers.forEach((n: string) => credit(n, 'Complainant', norm, c.status ?? null, fd, jd));
-      respondentLawyers.forEach((n: string) => credit(n, 'Respondent', norm, c.status ?? null, fd, jd));
+      petitionerLawyers.forEach((n: string) => credit(n, 'Complainant', norm, c.status ?? null, fd, jd, c.case_type ?? null, c.court_name ?? null));
+      respondentLawyers.forEach((n: string) => credit(n, 'Respondent', norm, c.status ?? null, fd, jd, c.case_type ?? null, c.court_name ?? null));
     });
 
     // Prepare upserts
@@ -1942,6 +1953,8 @@ export default function AdminDashboard({ onSwitchToLawyer }: { onSwitchToLawyer?
         dismissed_cases: a.dismissed,
         withdrawn_cases: a.withdrawn,
         partially_granted_cases: a.partiallyGranted,
+        case_types: Array.from(a.caseTypes.values()).sort((x, y) => x.localeCompare(y)),
+        courts: Array.from(a.courts.values()).sort((x, y) => x.localeCompare(y)),
         duration_count: a.durationCount,
         duration_sum_days: a.durationSum,
         win_rate,

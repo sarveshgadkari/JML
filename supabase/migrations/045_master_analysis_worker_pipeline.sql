@@ -2,6 +2,10 @@ BEGIN;
 
 SET search_path = public, extensions, pg_temp;
 
+ALTER TABLE public.lawyer_analytics
+  ADD COLUMN IF NOT EXISTS case_types text[] NOT NULL DEFAULT ARRAY[]::text[],
+  ADD COLUMN IF NOT EXISTS courts text[] NOT NULL DEFAULT ARRAY[]::text[];
+
 CREATE OR REPLACE FUNCTION public.admin_worker_scope_case_numbers(
   p_scope text DEFAULT 'all',
   p_case_numbers text[] DEFAULT NULL,
@@ -915,6 +919,7 @@ BEGIN
   CREATE TEMP TABLE tmp_batch_cases (
     case_id uuid,
     case_number text,
+    case_type text,
     court_id uuid,
     court_name text,
     status text,
@@ -930,6 +935,7 @@ BEGIN
   SELECT
     x.case_id,
     x.case_number,
+    x.case_type,
     x.court_id,
     x.court_name,
     x.status,
@@ -942,6 +948,7 @@ BEGIN
     SELECT DISTINCT ON (ca.case_number)
       ca.id AS case_id,
       ca.case_number,
+      ca.case_type,
       ca.court_id,
       ca.court_name,
       ca.status,
@@ -963,6 +970,8 @@ BEGIN
 
   WITH batch_cases AS (
     SELECT
+      case_type,
+      court_name,
       status,
       norm_outcome,
       duration_days,
@@ -984,6 +993,8 @@ BEGIN
   ),
   lawyer_instances AS (
     SELECT
+      bc.case_type,
+      bc.court_name,
       bc.status,
       bc.norm_outcome,
       bc.duration_days,
@@ -995,6 +1006,8 @@ BEGIN
     FROM batch_cases bc
     UNION ALL
     SELECT
+      bc.case_type,
+      bc.court_name,
       bc.status,
       bc.norm_outcome,
       bc.duration_days,
@@ -1010,6 +1023,8 @@ BEGIN
       li.side,
       l.id AS lawyer_id,
       l.name AS lawyer_name,
+      li.case_type,
+      li.court_name,
       li.status,
       li.norm_outcome,
       li.duration_days
@@ -1040,6 +1055,20 @@ BEGIN
       COUNT(*) FILTER (WHERE lower(coalesce(m.status, '')) ~ '(dismiss|rejected)')::int AS dismissed_cases,
       COUNT(*) FILTER (WHERE lower(coalesce(m.status, '')) ~ '(withdraw)')::int AS withdrawn_cases,
       COUNT(*) FILTER (WHERE lower(coalesce(m.status, '')) ~ '(partial|partly|in\\s+part)')::int AS partially_granted_cases,
+      COALESCE(
+        array_agg(DISTINCT NULLIF(btrim(m.case_type), ''))
+          FILTER (WHERE NULLIF(btrim(m.case_type), '') IS NOT NULL),
+        ARRAY[]::text[]
+      ) AS case_types,
+      COALESCE(
+        array_agg(
+          DISTINCT CASE
+            WHEN NULLIF(btrim(m.court_name), '') IS NULL THEN 'Unknown Court'
+            ELSE btrim(m.court_name)
+          END
+        ),
+        ARRAY[]::text[]
+      ) AS courts,
       COALESCE(SUM(m.duration_days) FILTER (WHERE m.norm_outcome IN ('in favor of complainant','in favor of respondent','settled') AND m.duration_days IS NOT NULL), 0) AS duration_sum_days,
       COALESCE(COUNT(m.duration_days) FILTER (WHERE m.norm_outcome IN ('in favor of complainant','in favor of respondent','settled') AND m.duration_days IS NOT NULL), 0)::int AS duration_count
     FROM mapped m
@@ -1049,6 +1078,7 @@ BEGIN
     lawyer_id, lawyer_name,
     total_cases, won_cases, lost_cases, settled_cases,
     dismissed_cases, withdrawn_cases, partially_granted_cases,
+    case_types, courts,
     win_rate, loss_rate, settlement_rate,
     avg_case_duration_days, duration_sum_days, duration_count,
     updated_at
@@ -1063,6 +1093,8 @@ BEGIN
     a.dismissed_cases,
     a.withdrawn_cases,
     a.partially_granted_cases,
+    a.case_types,
+    a.courts,
     COALESCE(ROUND(a.won_cases * 100.0 / NULLIF(a.total_cases, 0), 2), 0),
     COALESCE(ROUND(a.lost_cases * 100.0 / NULLIF(a.total_cases, 0), 2), 0),
     COALESCE(ROUND(a.settled_cases * 100.0 / NULLIF(a.total_cases, 0), 2), 0),
@@ -1081,6 +1113,8 @@ BEGIN
     dismissed_cases = EXCLUDED.dismissed_cases,
     withdrawn_cases = EXCLUDED.withdrawn_cases,
     partially_granted_cases = EXCLUDED.partially_granted_cases,
+    case_types = EXCLUDED.case_types,
+    courts = EXCLUDED.courts,
     duration_sum_days = EXCLUDED.duration_sum_days,
     duration_count = EXCLUDED.duration_count,
     win_rate = EXCLUDED.win_rate,
@@ -1490,6 +1524,8 @@ DECLARE
   v_chunk_duration_sum_days numeric := 0;
   v_chunk_duration_count integer := 0;
   v_lawyer_rows integer := 0;
+  v_case_types text[] := ARRAY[]::text[];
+  v_courts text[] := ARRAY[]::text[];
 BEGIN
   IF NOT public.is_admin_user() THEN
     RAISE EXCEPTION 'Admin access required';
@@ -1534,6 +1570,8 @@ BEGIN
   SELECT DISTINCT ON (ca.case_number)
     ca.id AS case_id,
     ca.case_number,
+    ca.case_type,
+    ca.court_name,
     ca.status,
     public.normalize_case_outcome(ca.outcome, ca.status, ca.summary) AS norm_outcome,
     CASE
@@ -1672,10 +1710,40 @@ BEGIN
       v_offset := v_offset + v_chunk_size;
     END LOOP;
 
+    SELECT
+      COALESCE(
+        array_agg(DISTINCT NULLIF(btrim(c.case_type), ''))
+          FILTER (WHERE NULLIF(btrim(c.case_type), '') IS NOT NULL),
+        ARRAY[]::text[]
+      ),
+      COALESCE(
+        array_agg(
+          DISTINCT CASE
+            WHEN NULLIF(btrim(c.court_name), '') IS NULL THEN 'Unknown Court'
+            ELSE btrim(c.court_name)
+          END
+        ),
+        ARRAY[]::text[]
+      )
+    INTO v_case_types, v_courts
+    FROM tmp_scope_cases c
+    WHERE
+      public.canonical_person_name(c.petitioner_lawyer_1) = v_target_lawyer_key OR
+      public.canonical_person_name(c.petitioner_lawyer_2) = v_target_lawyer_key OR
+      public.canonical_person_name(c.petitioner_lawyer_3) = v_target_lawyer_key OR
+      public.canonical_person_name(c.petitioner_lawyer_4) = v_target_lawyer_key OR
+      public.canonical_person_name(c.petitioner_lawyer_5) = v_target_lawyer_key OR
+      public.canonical_person_name(c.respondent_lawyer_1) = v_target_lawyer_key OR
+      public.canonical_person_name(c.respondent_lawyer_2) = v_target_lawyer_key OR
+      public.canonical_person_name(c.respondent_lawyer_3) = v_target_lawyer_key OR
+      public.canonical_person_name(c.respondent_lawyer_4) = v_target_lawyer_key OR
+      public.canonical_person_name(c.respondent_lawyer_5) = v_target_lawyer_key;
+
     INSERT INTO public.lawyer_analytics (
       lawyer_id, lawyer_name,
       total_cases, won_cases, lost_cases, settled_cases,
       dismissed_cases, withdrawn_cases, partially_granted_cases,
+      case_types, courts,
       win_rate, loss_rate, settlement_rate,
       avg_case_duration_days, duration_sum_days, duration_count,
       updated_at
@@ -1690,6 +1758,8 @@ BEGIN
       v_dismissed_cases,
       v_withdrawn_cases,
       v_partially_granted_cases,
+      v_case_types,
+      v_courts,
       COALESCE(ROUND(v_won_cases * 100.0 / NULLIF(v_total_cases, 0), 2), 0),
       COALESCE(ROUND(v_lost_cases * 100.0 / NULLIF(v_total_cases, 0), 2), 0),
       COALESCE(ROUND(v_settled_cases * 100.0 / NULLIF(v_total_cases, 0), 2), 0),
@@ -1708,6 +1778,8 @@ BEGIN
       dismissed_cases = EXCLUDED.dismissed_cases,
       withdrawn_cases = EXCLUDED.withdrawn_cases,
       partially_granted_cases = EXCLUDED.partially_granted_cases,
+      case_types = EXCLUDED.case_types,
+      courts = EXCLUDED.courts,
       duration_sum_days = EXCLUDED.duration_sum_days,
       duration_count = EXCLUDED.duration_count,
       win_rate = EXCLUDED.win_rate,
@@ -1734,6 +1806,8 @@ BEGIN
 
   WITH batch_cases AS (
     SELECT
+      case_type,
+      court_name,
       status,
       norm_outcome,
       duration_days,
@@ -1755,6 +1829,8 @@ BEGIN
   ),
   lawyer_instances AS (
     SELECT
+      bc.case_type,
+      bc.court_name,
       bc.status,
       bc.norm_outcome,
       bc.duration_days,
@@ -1768,6 +1844,8 @@ BEGIN
     FROM batch_cases bc
     UNION ALL
     SELECT
+      bc.case_type,
+      bc.court_name,
       bc.status,
       bc.norm_outcome,
       bc.duration_days,
@@ -1785,6 +1863,8 @@ BEGIN
       li.side,
       l.id AS lawyer_id,
       l.name AS lawyer_name,
+      li.case_type,
+      li.court_name,
       li.status,
       li.norm_outcome,
       li.duration_days
@@ -1815,6 +1895,20 @@ BEGIN
       COUNT(*) FILTER (WHERE lower(coalesce(m.status, '')) ~ '(dismiss|rejected)')::int AS dismissed_cases,
       COUNT(*) FILTER (WHERE lower(coalesce(m.status, '')) ~ '(withdraw)')::int AS withdrawn_cases,
       COUNT(*) FILTER (WHERE lower(coalesce(m.status, '')) ~ '(partial|partly|in\\s+part)')::int AS partially_granted_cases,
+      COALESCE(
+        array_agg(DISTINCT NULLIF(btrim(m.case_type), ''))
+          FILTER (WHERE NULLIF(btrim(m.case_type), '') IS NOT NULL),
+        ARRAY[]::text[]
+      ) AS case_types,
+      COALESCE(
+        array_agg(
+          DISTINCT CASE
+            WHEN NULLIF(btrim(m.court_name), '') IS NULL THEN 'Unknown Court'
+            ELSE btrim(m.court_name)
+          END
+        ),
+        ARRAY[]::text[]
+      ) AS courts,
       COALESCE(SUM(m.duration_days) FILTER (WHERE m.norm_outcome IN ('in favor of complainant','in favor of respondent','settled') AND m.duration_days IS NOT NULL), 0) AS duration_sum_days,
       COALESCE(COUNT(m.duration_days) FILTER (WHERE m.norm_outcome IN ('in favor of complainant','in favor of respondent','settled') AND m.duration_days IS NOT NULL), 0)::int AS duration_count
     FROM mapped m
@@ -1824,6 +1918,7 @@ BEGIN
     lawyer_id, lawyer_name,
     total_cases, won_cases, lost_cases, settled_cases,
     dismissed_cases, withdrawn_cases, partially_granted_cases,
+    case_types, courts,
     win_rate, loss_rate, settlement_rate,
     avg_case_duration_days, duration_sum_days, duration_count,
     updated_at
@@ -1838,6 +1933,8 @@ BEGIN
     a.dismissed_cases,
     a.withdrawn_cases,
     a.partially_granted_cases,
+    a.case_types,
+    a.courts,
     COALESCE(ROUND(a.won_cases * 100.0 / NULLIF(a.total_cases, 0), 2), 0),
     COALESCE(ROUND(a.lost_cases * 100.0 / NULLIF(a.total_cases, 0), 2), 0),
     COALESCE(ROUND(a.settled_cases * 100.0 / NULLIF(a.total_cases, 0), 2), 0),
@@ -1856,6 +1953,8 @@ BEGIN
     dismissed_cases = EXCLUDED.dismissed_cases,
     withdrawn_cases = EXCLUDED.withdrawn_cases,
     partially_granted_cases = EXCLUDED.partially_granted_cases,
+    case_types = EXCLUDED.case_types,
+    courts = EXCLUDED.courts,
     duration_sum_days = EXCLUDED.duration_sum_days,
     duration_count = EXCLUDED.duration_count,
     win_rate = EXCLUDED.win_rate,
